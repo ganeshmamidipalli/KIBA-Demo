@@ -1,0 +1,57 @@
+# RFQ Configuration - Fixed Boilerplate Text
+# ===========================================
+
+boilerplate:
+  # Procurement Instrument Definitions (always included)
+  instruments:
+    - "Contract: A formal, legally binding agreement between a buyer and a vendor that outlines detailed terms, deliverables, timelines, and responsibilities for complex or high-value goods or services."
+    - "Purchase Order: A simplified procurement instrument used to authorize a vendor to provide goods or services."
+    - "Credit Card: A direct purchasing method using an organizational credit card to quickly acquire goods or services without formal contracts or purchase orders."
+    - "Corporate Account Order: A procurement made through a vendor with whom Knowmadics has an established account or purchasing relationship (i.e. Verizon Wireless)."
+  
+  # Competitive procurement statement (shown when 2+ vendors selected)
+  competitive_def: "A Competitive Procurement is a purchasing process in which multiple vendors have been evaluated on criteria such as price, quality, delivery time, and vendor capability. This approach ensures fair competition and optimal value for Knowmadics."
+  
+  # Standard compliance notes
+  compliance_notes:
+    - "All vendors must comply with applicable U.S. federal regulations including NDAA §889, TAA, and Buy American Act where applicable."
+    - "Vendors must provide valid HTTPS purchase links and accept USD pricing."
+    - "All quoted lead times must be firm commitments, not estimates."
+    - "Products must be in stock or available within the specified delivery window."
+
+sections:
+  instruments_title: "Procurement Instrument Definitions"
+  competitive_title: "Competitive Procurement Statement"
+  compliance_title: "Vendor Compliance Requirements"
+  vendor_evaluation_title: "Vendor Evaluation & Comparison"
+
+# Default RFQ metadata
+defaults:
+  company_name: "Knowmadics, Inc."
+  company_address: "Corporate Office Address"
+  rfq_prefix: "RFQ"
+  validity_days: 30
+  response_format: "PDF or DOCX with line-item pricing and lead times"
+
+# Service Programs (dropdown options)
+service_programs:
+  - "Applied Research"
+  - "Advanced Development"
+  - "Systems Engineering"
+  - "Technical Services"
+  - "Software Development"
+  - "Cybersecurity Services"
+
+# Procurement types
+procurement_types:
+  - "Contract"
+  - "Purchase Order"
+  - "Credit Card"
+  - "Corporate Account Order"
+
+# Competition types
+competition_types:
+  - "Competitive"
+  - "Sole Source"
+  - "Single Source"
+

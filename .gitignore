@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Environment files with secrets
+.env
+.env.local
+backend/.env
+backend/.env.local
+
+# Keep documentation files
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Temp uploads
+temp_uploads/
+backend/temp_uploads/
+
+# Virtual environment site-packages (large)
+backend/Lib/
+backend/Scripts/
+backend/Include/
+backend/venv/
+
+# Frontend node_modules
+frontend-new/node_modules/

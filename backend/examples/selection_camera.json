@@ -1,0 +1,36 @@
+{
+  "product_name": "Night Vision IP Camera",
+  "selected_variant": {
+    "id": "stretch_for_performance",
+    "quantity": 12,
+    "metrics": {
+      "Resolution (MP)": 8,
+      "IR range (m)": 150,
+      "IP rating": "IP67",
+      "IK rating": "IK10",
+      "PoE class": "802.3at",
+      "ONVIF": "Profile S/G/T",
+      "Lens": "Varifocal 2.8-12mm",
+      "Features": "Starlight, WDR"
+    },
+    "must": [
+      {"key": "NDAA §889 compliance", "value": "true"},
+      {"key": "Wide temperature range", "value": "-40°C to 60°C"}
+    ],
+    "should": [
+      {"key": "Built-in analytics", "value": "Motion detection, tampering"}
+    ]
+  },
+  "delivery_window_days": 21,
+  "require_in_stock": true,
+  "delivery_location": {
+    "country": "USA",
+    "state": "VA",
+    "zip": "20190",
+    "radius_miles": 500
+  },
+  "vendor_region": "USA",
+  "budget_unit_anchor_usd": 450,
+  "allowed_stretch_range": [1.10, 1.25]
+}
+

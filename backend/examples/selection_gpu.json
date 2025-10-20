@@ -1,0 +1,30 @@
+{
+  "product_name": "AI Training GPU",
+  "selected_variant": {
+    "id": "stretch_for_performance",
+    "quantity": 4,
+    "metrics": {
+      "VRAM (GB)": 80,
+      "Memory Type": "HBM3",
+      "PCIe": "Gen5 x16",
+      "TDP (W)": 700,
+      "FP16 TFLOPS": 989,
+      "Interconnect": "NVLink 900GB/s"
+    },
+    "must": [
+      {"key": "PCIe Gen5 support", "value": "true"},
+      {"key": "ECC memory", "value": "true"}
+    ]
+  },
+  "delivery_window_days": 45,
+  "require_in_stock": false,
+  "delivery_location": {
+    "country": "USA",
+    "state": "CA",
+    "zip": "94025"
+  },
+  "vendor_region": "USA",
+  "budget_unit_anchor_usd": 28000,
+  "allowed_stretch_range": [1.10, 1.30]
+}
+
