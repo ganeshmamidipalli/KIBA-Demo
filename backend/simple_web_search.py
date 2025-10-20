@@ -57,6 +57,29 @@ def search_vendors_for_product(product_name: str, specs: List[str], budget: floa
         print(f"❌ Web search error: {e}")
         return []
 
+def run_basic_web_search(query: str) -> str:
+    """Run the exact minimal web_search call and return raw output_text."""
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            print("❌ OPENAI_API_KEY not set")
+            return ""
+
+        client = OpenAI(api_key=api_key)
+
+        resp = client.responses.create(
+            model="o4-mini",                     # reasoning-capable model
+            reasoning={"effort": "medium"},      # low | medium | high
+            input=query,
+            tools=[{"type": "web_search"}],      # minimal tool declaration
+            tool_choice="auto"
+        )
+
+        return resp.output_text or ""
+    except Exception as e:
+        print(f"❌ Basic web search error: {e}")
+        return ""
+
 def parse_vendor_response(response_text: str, product_name: str, budget: float, max_results: int) -> List[Dict[str, Any]]:
     """Parse vendor information from OpenAI response text."""
     vendors = []

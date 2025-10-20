@@ -33,7 +33,7 @@ from web_search_service import (
 from llm_search_query_builder import (
     generate_search_query_with_llm as generate_natural_search_instruction
 )
-from simple_web_search import search_vendors_for_product
+from simple_web_search import search_vendors_for_product, run_basic_web_search
 from product_parser_service import (
     parse_search_results
 )
@@ -980,6 +980,10 @@ async def vendor_finder_endpoint(req: Request):
         # Use simple web search with cache; only calls web if no cache or refresh=True
         vendors = search_vendors_for_product(product_name, selected_specs, budget, max_results, refresh)
         
+        # Also run the minimal web search and include raw output for UI display
+        basic_query = f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
+        raw_output = run_basic_web_search(basic_query) if refresh or page == 0 else ""
+        
         # Apply pagination
         start_idx = page * page_size
         end_idx = start_idx + page_size
@@ -999,7 +1003,8 @@ async def vendor_finder_endpoint(req: Request):
                 "found": len(vendors),
                 "missing_fields_count": 0,
                 "notes": f"Real vendor data for {product_name} with {len(selected_specs)} specifications"
-            }
+            },
+            "output_text": raw_output
         }
         
         return JSONResponse(response)
