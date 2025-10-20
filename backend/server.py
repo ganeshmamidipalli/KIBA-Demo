@@ -33,7 +33,7 @@ from web_search_service import (
 from llm_search_query_builder import (
     generate_search_query_with_llm as generate_natural_search_instruction
 )
-from simple_web_search import search_vendors_for_product, run_basic_web_search
+from simple_web_search import run_web_search
 from product_parser_service import (
     parse_search_results
 )
@@ -977,34 +977,26 @@ async def vendor_finder_endpoint(req: Request):
         logger.info(f"🔍 Finding vendors for: {product_name}")
         logger.info(f"   Budget: ${budget}, Specs: {selected_specs}")
         
-        # Use simple web search with cache; only calls web if no cache or refresh=True
-        vendors = search_vendors_for_product(product_name, selected_specs, budget, max_results, refresh)
+        # Run web search using the generated search query
+        search_query = f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
+        web_search_output = run_web_search(search_query)
         
-        # Also run the minimal web search and include raw output for UI display
-        basic_query = f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
-        raw_output = run_basic_web_search(basic_query) if refresh or page == 0 else ""
-        
-        # Apply pagination
-        start_idx = page * page_size
-        end_idx = start_idx + page_size
-        paginated_vendors = vendors[start_idx:end_idx]
-        
-        logger.info(f"✅ Found {len(vendors)} vendors, returning {len(paginated_vendors)} on page {page + 1}")
+        logger.info(f"✅ Web search completed for: {product_name}")
         
         # Format response
         response = {
-            "query": f"{product_name} {' '.join(selected_specs)} under ${budget} US vendor in stock deliver to Wichita KS",
+            "query": search_query,
             "selected_name": product_name,
             "selected_specs": selected_specs,
             "page": page,
             "page_size": page_size,
-            "results": paginated_vendors,
+            "results": [],  # Empty for now, will be populated from web search output
             "summary": {
-                "found": len(vendors),
+                "found": 0,
                 "missing_fields_count": 0,
-                "notes": f"Real vendor data for {product_name} with {len(selected_specs)} specifications"
+                "notes": f"Web search results for {product_name}"
             },
-            "output_text": raw_output
+            "output_text": web_search_output
         }
         
         return JSONResponse(response)

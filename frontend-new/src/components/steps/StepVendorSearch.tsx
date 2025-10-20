@@ -8,6 +8,7 @@ import { buildSearchQuery, findVendors } from "../../lib/api";
 import type { SpecVariant, KPARecommendations } from "../../types";
 
 interface Vendor {
+  id: string;
   vendor_name: string;
   product_name: string;
   model: string;
@@ -30,6 +31,13 @@ interface Vendor {
   };
   last_checked_utc: string;
   isSelected?: boolean;
+  // Additional fields for parsing
+  name?: string;
+  description?: string;
+  website?: string;
+  deliveryTime?: string;
+  rating?: number;
+  contact?: string;
 }
 
 interface StepVendorSearchProps {
@@ -175,7 +183,7 @@ export function StepVendorSearch({
         vendorName = vendorName.replace(/^[•\-\*\s]+/, '').trim();
         
         if (vendorName && vendorName.length > 2 && vendorName.length < 100) {
-          vendor.name = vendorName;
+          vendor.vendor_name = vendorName;
           
           // Set description
           if (description && description.length > 5) {
@@ -186,9 +194,9 @@ export function StepVendorSearch({
           if (price) {
             const priceMatch = price.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?/);
             if (priceMatch) {
-              vendor.price = priceMatch[0];
+              vendor.price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
             } else if (price.match(/\d+/)) {
-              vendor.price = `$${price}`;
+              vendor.price = parseFloat(price.replace(/[$,]/g, ''));
             }
           }
           
@@ -222,7 +230,7 @@ export function StepVendorSearch({
           }
           
           // If we have a valid vendor, add it
-          if (vendor.name && !vendors.some(v => v.name === vendor.name)) {
+          if (vendor.vendor_name && !vendors.some(v => v.vendor_name === vendor.vendor_name)) {
             vendors.push({
               ...vendor,
               id: `vendor-${vendorId++}`,
@@ -245,7 +253,27 @@ export function StepVendorSearch({
         if (line.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && line.length > 3 && line.length < 100) {
           const vendor: Vendor = {
             id: `vendor-${vendorId++}`,
-            name: line,
+            vendor_name: line,
+            product_name: selectedVariants[0]?.title || 'Unknown Product',
+            model: selectedVariants[0]?.title || 'Unknown Product',
+            sku: `WEB-${vendorId}`,
+            price: 0,
+            currency: 'USD',
+            availability: 'unknown',
+            ships_to: ['USA'],
+            delivery_window_days: 5,
+            purchase_url: '',
+            evidence_urls: [],
+            sales_email: '',
+            sales_phone: undefined,
+            return_policy_url: undefined,
+            notes: 'Found via web search',
+            us_vendor_verification: {
+              is_us_vendor: true,
+              method: 'web_search',
+              business_address: 'United States'
+            },
+            last_checked_utc: new Date().toISOString(),
             description: "Vendor found in search results",
             isSelected: false
           };
@@ -255,7 +283,7 @@ export function StepVendorSearch({
             const nextLine = lines[j];
             const priceMatch = nextLine.match(/\$[\d,]+(?:\.\d{2})?/);
             if (priceMatch) {
-              vendor.price = priceMatch[0];
+              vendor.price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
               break;
             }
           }
@@ -269,7 +297,27 @@ export function StepVendorSearch({
     if (vendors.length === 0) {
       vendors.push({
         id: `vendor-${vendorId++}`,
-        name: "Search Results Summary",
+        vendor_name: "Search Results Summary",
+        product_name: selectedVariants[0]?.title || 'Unknown Product',
+        model: selectedVariants[0]?.title || 'Unknown Product',
+        sku: `SUMMARY-1`,
+        price: 0,
+        currency: 'USD',
+        availability: 'unknown',
+        ships_to: ['USA'],
+        delivery_window_days: 5,
+        purchase_url: '',
+        evidence_urls: [],
+        sales_email: '',
+        sales_phone: undefined,
+        return_policy_url: undefined,
+        notes: 'Search results summary',
+        us_vendor_verification: {
+          is_us_vendor: true,
+          method: 'summary',
+          business_address: 'United States'
+        },
+        last_checked_utc: new Date().toISOString(),
         description: text.substring(0, 300) + (text.length > 300 ? "..." : ""),
         isSelected: false
       });
@@ -423,7 +471,7 @@ export function StepVendorSearch({
               setVendors(vendorData.results || []);
               
               // Set search output text to enable the continue button
-              const searchText = `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
+              const searchText = vendorData.output_text || `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
               setSearchOutputText(searchText);
               
             } catch (error: any) {
@@ -611,6 +659,28 @@ export function StepVendorSearch({
                 </p>
             </CardContent>
           </Card>
+          )}
+
+          {/* Web Search Results */}
+          {searchOutputText && (
+            <Card className="border-primary/20">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Search className="h-4 w-4 text-primary" />
+                  Web Search Results
+                </CardTitle>
+                <CardDescription>
+                  Raw web search output from o4-mini
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <pre className="whitespace-pre-wrap text-sm text-gray-700">
+                    {searchOutputText}
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Vendor Results */}
