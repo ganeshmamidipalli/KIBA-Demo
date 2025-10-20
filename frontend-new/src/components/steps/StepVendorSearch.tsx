@@ -77,47 +77,100 @@ export function StepVendorSearch({
     let currentVendor: Partial<Vendor> = {};
     let vendorId = 1;
 
-    for (const line of lines) {
-      const trimmedLine = line.trim();
+    // First, try to split by common vendor separators
+    const vendorSections = text.split(/(?:\n\s*\n|##|###|•\s*|-\s*|^\d+\.\s*)/m);
+    
+    for (const section of vendorSections) {
+      const sectionLines = section.split('\n').map(line => line.trim()).filter(line => line);
+      if (sectionLines.length === 0) continue;
       
-      // Skip empty lines
-      if (!trimmedLine) continue;
+      let vendor: Partial<Vendor> = {};
       
-      // Check for vendor name patterns
-      if (trimmedLine.match(/^[A-Z][a-zA-Z\s&]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group)$/)) {
-        if (currentVendor.name) {
-          vendors.push({ ...currentVendor, id: `vendor-${vendorId++}` } as Vendor);
-        }
-        currentVendor = { name: trimmedLine };
-      }
-      // Check for price patterns
-      else if (trimmedLine.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?/)) {
-        currentVendor.price = trimmedLine;
-      }
-      // Check for website patterns
-      else if (trimmedLine.match(/https?:\/\/[^\s]+/)) {
-        currentVendor.website = trimmedLine;
-      }
-      // Check for rating patterns
-      else if (trimmedLine.match(/\d+(?:\.\d+)?\s*\/\s*5|★\s*\d+(?:\.\d+)?/)) {
-        const ratingMatch = trimmedLine.match(/(\d+(?:\.\d+)?)/);
-        if (ratingMatch) {
-          currentVendor.rating = parseFloat(ratingMatch[1]);
+      // Look for vendor name in first few lines
+      for (let i = 0; i < Math.min(3, sectionLines.length); i++) {
+        const line = sectionLines[i];
+        
+        // More flexible vendor name patterns
+        if (line.match(/^[A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?$/i) ||
+            line.match(/^[A-Z][a-zA-Z\s&.,'-]+(?:\.com|\.net|\.org)$/i) ||
+            line.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && line.length > 3 && line.length < 50) {
+          vendor.name = line;
+          break;
         }
       }
-      // Check for delivery time patterns
-      else if (trimmedLine.match(/\d+\s*(?:days?|weeks?|months?)/i)) {
-        currentVendor.deliveryTime = trimmedLine;
+      
+      // If no clear vendor name found, use first line as name
+      if (!vendor.name && sectionLines[0]) {
+        vendor.name = sectionLines[0].substring(0, 50); // Limit length
       }
-      // Everything else is description
-      else if (trimmedLine.length > 10) {
-        currentVendor.description = (currentVendor.description || '') + ' ' + trimmedLine;
+      
+      // Parse the rest of the section for details
+      for (const line of sectionLines) {
+        // Check for price patterns (more flexible)
+        if (line.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?(?:\s*(?:per|each|unit|piece|item))?/i)) {
+          vendor.price = line;
+        }
+        // Check for website patterns
+        else if (line.match(/https?:\/\/[^\s]+/)) {
+          vendor.website = line;
+        }
+        // Check for rating patterns
+        else if (line.match(/\d+(?:\.\d+)?\s*\/\s*5|★\s*\d+(?:\.\d+)?|rating[:\s]*\d+(?:\.\d+)?/i)) {
+          const ratingMatch = line.match(/(\d+(?:\.\d+)?)/);
+          if (ratingMatch) {
+            vendor.rating = parseFloat(ratingMatch[1]);
+          }
+        }
+        // Check for delivery time patterns
+        else if (line.match(/\d+\s*(?:days?|weeks?|months?|hours?)(?:\s*(?:delivery|shipping|lead\s*time))?/i)) {
+          vendor.deliveryTime = line;
+        }
+        // Check for contact info
+        else if (line.match(/contact[:\s]*[^\s]+@[^\s]+|email[:\s]*[^\s]+@[^\s]+|phone[:\s]*[\d\s\-\(\)]+/i)) {
+          vendor.contact = line;
+        }
+        // Everything else longer than 10 chars is description
+        else if (line.length > 10 && !vendor.description) {
+          vendor.description = line;
+        }
+      }
+      
+      // If we have a vendor name, add it
+      if (vendor.name) {
+        vendors.push({
+          ...vendor,
+          id: `vendor-${vendorId++}`,
+          isSelected: false
+        } as Vendor);
       }
     }
 
-    // Add the last vendor
-    if (currentVendor.name) {
-      vendors.push({ ...currentVendor, id: `vendor-${vendorId++}` } as Vendor);
+    // If no vendors found with section parsing, try line-by-line parsing
+    if (vendors.length === 0) {
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.length < 5) continue;
+        
+        // Look for any line that might be a vendor name
+        if (trimmedLine.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && trimmedLine.length > 3 && trimmedLine.length < 100) {
+          vendors.push({
+            id: `vendor-${vendorId++}`,
+            name: trimmedLine,
+            description: "Vendor found in search results",
+            isSelected: false
+          });
+        }
+      }
+    }
+
+    // If still no vendors, create a generic vendor from the search text
+    if (vendors.length === 0) {
+      vendors.push({
+        id: `vendor-${vendorId++}`,
+        name: "Search Results",
+        description: text.substring(0, 200) + (text.length > 200 ? "..." : ""),
+        isSelected: false
+      });
     }
 
     return vendors;
@@ -400,6 +453,14 @@ export function StepVendorSearch({
                   </div>
                 ) : vendors.length > 0 ? (
                   <div className="space-y-4">
+                    {/* Debug section - remove in production */}
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer hover:text-foreground">Debug: Raw Search Results</summary>
+                      <pre className="mt-2 p-2 bg-slate-100 dark:bg-slate-800 rounded text-xs overflow-auto max-h-32">
+                        {searchOutputText}
+                      </pre>
+                    </details>
+                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {vendors.map((vendor) => {
                         const isSelected = selectedVendors.some(v => v.id === vendor.id);
@@ -438,21 +499,31 @@ export function StepVendorSearch({
                               )}
                               
                               <div className="space-y-2">
-                                {vendor.price && (
+                                {vendor.price ? (
                                   <div className="flex items-center gap-2">
                                     <DollarSign className="h-4 w-4 text-green-600" />
                                     <span className="font-semibold text-green-600">{vendor.price}</span>
                                   </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground">Price not available</span>
+                                  </div>
                                 )}
                                 
-                                {vendor.deliveryTime && (
+                                {vendor.deliveryTime ? (
                                   <div className="flex items-center gap-2">
                                     <Clock className="h-4 w-4 text-blue-600" />
                                     <span className="text-sm text-muted-foreground">{vendor.deliveryTime}</span>
                                   </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground">Delivery time not specified</span>
+                                  </div>
                                 )}
                                 
-                                {vendor.website && (
+                                {vendor.website ? (
                                   <div className="flex items-center gap-2">
                                     <ExternalLink className="h-4 w-4 text-primary" />
                                     <a 
@@ -464,6 +535,17 @@ export function StepVendorSearch({
                                     >
                                       Visit Website
                                     </a>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-sm text-muted-foreground">No website provided</span>
+                                  </div>
+                                )}
+                                
+                                {vendor.contact && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm text-muted-foreground">{vendor.contact}</span>
                                   </div>
                                 )}
                               </div>
@@ -496,9 +578,50 @@ export function StepVendorSearch({
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Package className="h-8 w-8 mx-auto mb-2" />
-                    <p>No vendors found in search results</p>
+                  <div className="space-y-4">
+                    <div className="text-center py-4 text-muted-foreground">
+                      <Package className="h-8 w-8 mx-auto mb-2" />
+                      <p>No vendors could be parsed from search results</p>
+                      <p className="text-sm mt-1">Showing raw search results below</p>
+                    </div>
+                    
+                    {/* Fallback: Show raw search results */}
+                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4">
+                      <h4 className="font-semibold mb-2 text-sm">Raw Search Results:</h4>
+                      <div
+                        className="prose prose-sm dark:prose-invert max-w-none text-xs"
+                        dangerouslySetInnerHTML={{
+                          __html: searchOutputText
+                            .replace(/\n\n/g, '</p><p>')
+                            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-primary font-semibold">$1</strong>')
+                            .replace(/\n/g, '<br/>')
+                            .replace(/^(.+)$/s, '<p>$1</p>')
+                            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary underline">$1</a>')
+                        }}
+                      />
+                    </div>
+                    
+                    {/* Manual vendor creation option */}
+                    <div className="text-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          // Create a single vendor from the raw text
+                          const manualVendor: Vendor = {
+                            id: 'manual-vendor-1',
+                            name: 'Search Results Summary',
+                            description: searchOutputText.substring(0, 300) + (searchOutputText.length > 300 ? '...' : ''),
+                            isSelected: false
+                          };
+                          setVendors([manualVendor]);
+                        }}
+                        className="gap-2"
+                      >
+                        <Package className="h-4 w-4" />
+                        Create Vendor from Results
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
