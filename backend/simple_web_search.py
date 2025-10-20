@@ -29,3 +29,4 @@ def run_web_search(query: str) -> str:
     except Exception as e:
         print(f"❌ Web search error: {e}")
         return ""
+        

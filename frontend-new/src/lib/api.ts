@@ -313,7 +313,8 @@ export async function findVendors(
   kpaRecommendations: any = null,
   page: number = 0,
   pageSize: number = 10,
-  refresh: boolean = false
+  refresh: boolean = false,
+  generatedQuery?: string
 ) {
   const response = await fetch(`${API_BASE}/api/vendor_finder`, {
     method: 'POST',
@@ -325,7 +326,8 @@ export async function findVendors(
       kpa_recommendations: kpaRecommendations,
       page: page,
       page_size: pageSize,
-      refresh: refresh
+      refresh: refresh,
+      generated_query: generatedQuery
     })
   });
 

@@ -452,13 +452,14 @@ export function StepVendorSearch({
           // Step 3: After steps animation, start the actual search
           setTimeout(async () => {
             try {
-              // Find vendors using the new vendor finder
+              // Find vendors using the new vendor finder with the exact generated query
               const vendorData = await findVendors(
                 selectedVariant,
                 kpaRecommendations,
                 0, // page
                 maxResults, // page size
-                false // refresh
+                false, // refresh
+                query // generated search query to send as-is
               );
               
               setSearchStatus("Vendor search complete!");

@@ -958,6 +958,7 @@ async def vendor_finder_endpoint(req: Request):
         
         selected_variant = body.get("selected_variant", {})
         kpa_recommendations = body.get("kpa_recommendations", {})
+        generated_query = body.get("generated_query", "")
         page = body.get("page", 0)
         page_size = body.get("page_size", 10)
         max_results = body.get("max_results", 10)
@@ -977,20 +978,21 @@ async def vendor_finder_endpoint(req: Request):
         logger.info(f"🔍 Finding vendors for: {product_name}")
         logger.info(f"   Budget: ${budget}, Specs: {selected_specs}")
         
-        # Run web search using the generated search query
-        search_query = f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
+        # Run web search using the exact generated query if provided, otherwise build a simple default
+        search_query = generated_query.strip() if isinstance(generated_query, str) and generated_query.strip() else \
+            f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
         web_search_output = run_web_search(search_query)
         
         logger.info(f"✅ Web search completed for: {product_name}")
         
-        # Format response
+        # Format response (return query and raw output exactly)
         response = {
             "query": search_query,
             "selected_name": product_name,
             "selected_specs": selected_specs,
             "page": page,
             "page_size": page_size,
-            "results": [],  # Empty for now, will be populated from web search output
+            "results": [],
             "summary": {
                 "found": 0,
                 "missing_fields_count": 0,
