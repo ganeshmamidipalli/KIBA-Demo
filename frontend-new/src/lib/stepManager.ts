@@ -261,16 +261,20 @@ export class StepManager {
 
   // Get next step ID
   getNextStepId(): number | null {
-    const currentStep = this.state.currentStep;
-    const nextStep = this.steps.find(step => step.id > currentStep);
-    return nextStep ? nextStep.id : null;
+    const ordered = [...this.steps].sort((a, b) => a.id - b.id);
+    const idx = ordered.findIndex(s => s.id === this.state.currentStep);
+    if (idx === -1) return null;
+    const next = ordered[idx + 1];
+    return next ? next.id : null;
   }
 
   // Get previous step ID
   getPreviousStepId(): number | null {
-    const currentStep = this.state.currentStep;
-    const prevStep = this.steps.find(step => step.id < currentStep);
-    return prevStep ? prevStep.id : null;
+    const ordered = [...this.steps].sort((a, b) => a.id - b.id);
+    const idx = ordered.findIndex(s => s.id === this.state.currentStep);
+    if (idx === -1) return null;
+    const prev = ordered[idx - 1];
+    return prev ? prev.id : null;
   }
 
   // Go back to previous step
