@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Loader2, Sparkles, RefreshCw, CheckCircle2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronLeft, ChevronRight, Loader2, Sparkles, RefreshCw, CheckCircle2, Brain, Zap, Target, Lightbulb, ArrowRight } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
@@ -93,19 +93,69 @@ export function StepSpecifications({
   const [projectSummary, setProjectSummary] = useState<string | null>(null);
   const [showProjectSummary, setShowProjectSummary] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [showThinkingChain, setShowThinkingChain] = useState(false);
+  const [thinkingSteps, setThinkingSteps] = useState<Array<{id: string, title: string, description: string, status: 'pending' | 'processing' | 'completed', icon: any}>>([]);
   
+  // Initialize AI thinking chain steps
+  const initializeThinkingChain = () => {
+    const steps = [
+      {
+        id: 'analyze-answers',
+        title: 'Analyzing Your Answers',
+        description: 'Processing your responses to understand project requirements',
+        status: 'pending' as const,
+        icon: Brain
+      },
+      {
+        id: 'generate-summary',
+        title: 'Generating Project Summary',
+        description: 'Creating comprehensive project summary from your inputs',
+        status: 'pending' as const,
+        icon: Target
+      },
+      {
+        id: 'research-options',
+        title: 'Researching Product Options',
+        description: 'Analyzing market options and technical specifications',
+        status: 'pending' as const,
+        icon: Zap
+      },
+      {
+        id: 'generate-recommendations',
+        title: 'Generating AI Recommendations',
+        description: 'Creating personalized recommendations based on analysis',
+        status: 'pending' as const,
+        icon: Lightbulb
+      }
+    ];
+    setThinkingSteps(steps);
+  };
+
   // Convert KPA recommendations to SpecVariant format for compatibility
   const convertKPARecommendations = (kpaRecs: KPARecommendations): SpecVariant[] => {
-    return kpaRecs.recommendations.map((rec, index) => ({
-      id: rec.id,
-      title: rec.name,
-      summary: rec.value_note || "",
-      quantity: parseInt(quantity) || 1,
-      est_unit_price_usd: rec.estimated_price_usd || 0,
-      est_total_usd: (rec.estimated_price_usd || 0) * (parseInt(quantity) || 1),
-      lead_time_days: 30, // Default lead time
-      rationale_summary: rec.rationale ? [rec.rationale] : []
-    }));
+    console.log("Converting KPA recommendations:", kpaRecs);
+    return kpaRecs.recommendations.map((rec, index) => {
+      console.log(`Recommendation ${index + 1}:`, {
+        name: rec.name,
+        estimated_price_usd: rec.estimated_price_usd,
+        value_note: rec.value_note,
+        rationale: rec.rationale
+      });
+      
+      // Use budget as fallback if price is null or 0
+      const unitPrice = rec.estimated_price_usd || (parseFloat(budget) / (parseInt(quantity) || 1));
+      
+      return {
+        id: rec.id,
+        title: rec.name,
+        summary: rec.value_note || "",
+        quantity: parseInt(quantity) || 1,
+        est_unit_price_usd: unitPrice,
+        est_total_usd: unitPrice * (parseInt(quantity) || 1),
+        lead_time_days: 30, // Default lead time
+        rationale_summary: rec.rationale ? [rec.rationale] : []
+      };
+    });
   };
 
   // Generate recommendations using the existing API
@@ -113,6 +163,12 @@ export function StepSpecifications({
     if (generatingRecommendations) return;
     
     setGeneratingRecommendations(true);
+    
+    // Show thinking chain for recommendations
+    setThinkingSteps(prev => prev.map(step => 
+      step.id === 'research-options' ? { ...step, status: 'processing' } : step
+    ));
+    
     try {
       const response = await api.generateRecommendations({
         product_name: productName,
@@ -129,12 +185,28 @@ export function StepSpecifications({
         }
       });
       
+      // Mark research as completed and start generating
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'research-options' ? { ...step, status: 'completed' } : 
+        step.id === 'generate-recommendations' ? { ...step, status: 'processing' } : step
+      ));
+      
       if (response.variants && response.variants.length > 0) {
         setVariants(response.variants);
         setAiRecommendation(response.ai_recommendation);
       }
+      
+      // Mark generation as completed
+      setTimeout(() => {
+        setThinkingSteps(prev => prev.map(step => 
+          step.id === 'generate-recommendations' ? { ...step, status: 'completed' } : step
+        ));
+        setShowThinkingChain(false);
+      }, 1000);
+      
     } catch (error) {
       console.error("Error generating recommendations:", error);
+      setShowThinkingChain(false);
     } finally {
       setGeneratingRecommendations(false);
     }
@@ -148,6 +220,7 @@ export function StepSpecifications({
     }
 
     setSubmittingFollowups(true);
+    
     try {
       // Save the follow-up answers
       const response = await api.submitFollowups({
@@ -157,8 +230,9 @@ export function StepSpecifications({
       
       console.log("Follow-up answers saved successfully:", response);
       
-      // Proceed to next step (Project Confirmation)
+      // Proceed to next step (Project Confirmation) immediately
       onNext();
+      
     } catch (error) {
       console.error("Error in follow-up process:", error);
       alert("Error processing follow-ups. Please try again.");
@@ -175,17 +249,46 @@ export function StepSpecifications({
     }
 
     setGeneratingRecommendations(true);
+    
+    // Show thinking chain for KPA recommendations
+    initializeThinkingChain();
+    setShowThinkingChain(true);
+    
     try {
+      // Step 1: Analyze answers
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'analyze-answers' ? { ...step, status: 'processing' } : step
+      ));
+      
+      // Small delay to show processing
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Mark analyze as completed and start research
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'analyze-answers' ? { ...step, status: 'completed' } : 
+        step.id === 'research-options' ? { ...step, status: 'processing' } : step
+      ));
+      
       const response = await api.generateFinalRecommendations(kpaSessionId);
-      setKpaRecommendations(response.recommendations);
+      console.log("StepSpecifications: Full response:", response);
+      
+      // The response structure is { recommendations: {...}, version: 1 }
+      const recommendationsData = response.recommendations;
+      setKpaRecommendations(recommendationsData);
       setSessionVersion(response.version || 0);
       
+      // Mark research as completed and start generating
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'research-options' ? { ...step, status: 'completed' } : 
+        step.id === 'generate-recommendations' ? { ...step, status: 'processing' } : step
+      ));
+      
       // Convert to SpecVariant format and update state
-      const convertedVariants = convertKPARecommendations(response.recommendations);
+      const convertedVariants = convertKPARecommendations(recommendationsData);
       setVariants(convertedVariants);
       
       // Auto-select recommended variant
-      const recommendedIndex = response.recommendations.recommended_index;
+      const recommendedIndex = recommendationsData.recommended_index;
       if (convertedVariants[recommendedIndex]) {
         setSelectedVariants([convertedVariants[recommendedIndex]]);
       }
@@ -193,10 +296,25 @@ export function StepSpecifications({
       // Hide project summary and show recommendations
       setShowProjectSummary(false);
       
+      // Small delay to show generating
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Mark generation as completed
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'generate-recommendations' ? { ...step, status: 'completed' } : step
+      ));
+      
+      // Hide thinking chain after completion
+      setTimeout(() => {
+        setShowThinkingChain(false);
+      }, 1000);
+      
       console.log("Final recommendations generated:", response);
     } catch (error) {
       console.error("Error generating final recommendations:", error);
-      alert("Error generating recommendations. Please try again.");
+      console.error("Error details:", error.message);
+      alert(`Error generating recommendations: ${error.message}. Please try again.`);
+      setShowThinkingChain(false);
     } finally {
       setGeneratingRecommendations(false);
     }
@@ -280,10 +398,10 @@ export function StepSpecifications({
         if (convertedVariants[recommendedIndex]) {
           setSelectedVariants([convertedVariants[recommendedIndex]]);
         }
-      } else if (variants.length === 0 && !generatingRecommendations && !intakeData) {
-        // Try to fetch recommendations from session if we have a session ID
+      } else if (variants.length === 0 && !generatingRecommendations && !kpaRecommendations) {
+        // Generate recommendations with AI Processing Chain
         if (kpaSessionId) {
-          fetchRecommendationsFromSession();
+          handleGenerateRecommendations();
         } else {
           setTimeout(() => generateRecommendations(), 500);
         }
@@ -476,6 +594,7 @@ export function StepSpecifications({
           </CardContent>
         </Card>
       )}
+
 
       {/* Step 3: No follow-up questions needed */}
       {currentStep === 3 && (!intakeData || !intakeData.missing_info_questions || intakeData.missing_info_questions.length === 0) && (
@@ -806,8 +925,60 @@ export function StepSpecifications({
         </>
       )}
 
+      {/* Step 5: AI Processing Chain */}
+      {currentStep === 5 && showThinkingChain && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Brain className="h-6 w-6 text-blue-500" />
+              AI Processing Chain
+            </CardTitle>
+            <CardDescription>
+              Our AI is analyzing your responses and generating recommendations...
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {thinkingSteps.map((step, index) => {
+                const Icon = step.icon;
+                return (
+                  <motion.div
+                    key={step.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.2 }}
+                    className="flex items-center gap-4"
+                  >
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+                      step.status === 'completed' 
+                        ? 'bg-green-100 text-green-600' 
+                        : step.status === 'processing'
+                        ? 'bg-blue-100 text-blue-600 animate-pulse'
+                        : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      {step.status === 'completed' ? (
+                        <CheckCircle2 className="h-5 w-5" />
+                      ) : (
+                        <Icon className="h-5 w-5" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-sm">{step.title}</h4>
+                      <p className="text-xs text-muted-foreground">{step.description}</p>
+                    </div>
+                    {index < thinkingSteps.length - 1 && (
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step 5: No recommendations yet - show loading or generate button */}
-      {currentStep === 5 && variants.length === 0 && !kpaRecommendations && (
+      {currentStep === 5 && variants.length === 0 && !kpaRecommendations && !showThinkingChain && (
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">

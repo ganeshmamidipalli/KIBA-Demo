@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, Sun, CheckCircle2, Circle } from "lucide-react";
+import { Moon, Sun, CheckCircle2, Circle, AlertCircle, CheckCircle } from "lucide-react";
 import { useTheme } from "./components/theme-provider";
 import { Button } from "./components/ui/button";
 import { Progress } from "./components/ui/progress";
 import { cn } from "./lib/utils";
+import { useStepManager } from "./hooks/useStepManager";
+import { STEP_CONFIGS } from "./lib/stepConfigs";
 import type { SpecVariant, Attachment, RFQResult, IntakeData, KPARecommendations } from "./types";
 
 // Step Components (to be created)
@@ -14,21 +16,33 @@ import { StepProjectSummary } from "./components/steps/StepProjectSummary";
 import { StepSpecifications } from "./components/steps/StepSpecifications";
 import { StepVendorSearch } from "./components/steps/StepVendorSearch";
 import { StepRFQ } from "./components/steps/StepRFQ";
+import { StepRFQProcurement } from "./components/steps/StepRFQProcurement";
 
-const STEPS = [
-  { id: 1, label: "Project Context", component: StepProjectContext },
-  { id: 2, label: "Product + Industry", component: StepProductDetails },
-  { id: 3, label: "AI Follow-up Questions", component: StepSpecifications },
-  { id: 4, label: "Project Confirmation", component: StepProjectSummary },
-  { id: 5, label: "Specifications", component: StepSpecifications },
-  { id: 6, label: "Search", component: StepVendorSearch },
-  { id: 7, label: "RFQ", component: StepRFQ },
-];
+// Use step configurations from the centralized config
+const getStepTitle = (step: number): string => {
+  const stepInfo = STEP_CONFIGS.find(s => s.id === step);
+  return stepInfo?.title || `Step ${step}`;
+};
 
 export default function App() {
   const { theme, setTheme } = useTheme();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const stepManager = useStepManager();
+  const [notifications, setNotifications] = useState<Array<{id: string, type: 'success' | 'error' | 'info', message: string}>>([]);
+
+  // Notification functions
+  const addNotification = (type: 'success' | 'error' | 'info', message: string) => {
+    const id = Date.now().toString();
+    setNotifications(prev => [...prev, { id, type, message }]);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
 
   // Step 1: Project Context
   const [procurementType, setProcurementType] = useState("");
@@ -63,40 +77,88 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOutputText, setSearchOutputText] = useState("");
   const [searching, setSearching] = useState(false);
+  const [selectedVendors, setSelectedVendors] = useState<any[]>([]);
 
   // Step 5: RFQ
   const [generatedRFQ, setGeneratedRFQ] = useState<RFQResult | null>(null);
   const [generatingRFQ, setGeneratingRFQ] = useState(false);
 
-  const progressPercent = (currentStep / STEPS.length) * 100;
-
-  const handleNext = () => {
-    console.log("App: handleNext called, current step:", currentStep);
-    console.log("App: KPA One-Flow state:", {
-      kpaSessionId,
-      intakeData,
-      followupAnswers,
-      kpaRecommendations
-    });
-    
-    if (!completedSteps.includes(currentStep)) {
-      setCompletedSteps([...completedSteps, currentStep]);
-    }
-    if (currentStep < STEPS.length) {
-      setCurrentStep(currentStep + 1);
+  // Enhanced step navigation with error handling
+  const handleNext = async (stepData?: any) => {
+    try {
+      console.log("App: handleNext called, current step:", stepManager.currentStep);
+      console.log("App: Step data:", stepData);
+      
+      // Update global state with step data
+      if (stepData) {
+        if (stepData.productName) {
+          console.log("App: Setting productName:", stepData.productName);
+          setProductName(stepData.productName);
+        }
+        if (stepData.category) {
+          setCategory(stepData.category);
+        }
+        if (stepData.quantity) {
+          setQuantity(stepData.quantity);
+        }
+        if (stepData.budget) {
+          setBudget(stepData.budget);
+        }
+        if (stepData.projectScope) {
+          setProjectScope(stepData.projectScope);
+        }
+        if (stepData.selectedVendors) {
+          console.log("App: Setting selectedVendors:", stepData.selectedVendors);
+          setSelectedVendors(stepData.selectedVendors);
+        }
+      }
+      
+      const result = await stepManager.completeCurrentStep(stepData);
+      
+      if (result.success) {
+        console.log("App: Step completed successfully, new current step:", stepManager.currentStep);
+        addNotification('success', `Step completed! Moving to ${getStepTitle(stepManager.currentStep)}`);
+      } else {
+        console.log("App: Step completion failed:", result.error);
+        addNotification('error', `Step completion failed: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error in handleNext:', error);
+      addNotification('error', 'An unexpected error occurred');
     }
   };
 
-  const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
+  const handleBack = async () => {
+    try {
+      const result = await stepManager.goBack();
+      
+      if (result.success) {
+        addNotification('info', `Returning to ${getStepTitle(stepManager.currentStep)}`);
+      } else {
+        addNotification('error', `Cannot go back: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error in handleBack:', error);
+      addNotification('error', 'An unexpected error occurred');
     }
   };
 
-  const jumpToStep = (step: number) => {
-    // Can only jump to completed steps or next step
-    if (completedSteps.includes(step - 1) || step === 1) {
-      setCurrentStep(step);
+  const jumpToStep = async (step: number) => {
+    try {
+      if (stepManager.canAccessStep(step)) {
+        const result = await stepManager.navigateToStep(step);
+        
+        if (result.success) {
+          addNotification('info', `Navigated to ${getStepTitle(step)}`);
+        } else {
+          addNotification('error', `Cannot access step: ${result.error}`);
+        }
+      } else {
+        addNotification('error', 'Cannot access this step. Complete previous steps first.');
+      }
+    } catch (error) {
+      console.error('Error in jumpToStep:', error);
+      addNotification('error', 'An unexpected error occurred');
     }
   };
 
@@ -138,14 +200,16 @@ export default function App() {
       <div className="border-b bg-muted/30">
         <div className="container py-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">
-              Step {currentStep} of {STEPS.length}
-            </span>
+            <div>
+              <span className="text-sm font-medium">
+                Step {stepManager.currentStep} of {STEP_CONFIGS.length}: {getStepTitle(stepManager.currentStep)}
+              </span>
+            </div>
             <span className="text-xs text-muted-foreground">
-              {Math.round(progressPercent)}% Complete
+              {Math.round(stepManager.progress)}% Complete
             </span>
           </div>
-          <Progress value={progressPercent} className="h-1.5" />
+          <Progress value={stepManager.progress} className="h-1.5" />
         </div>
       </div>
 
@@ -154,10 +218,10 @@ export default function App() {
           {/* Sidebar - Steps Navigation */}
           <div className="lg:col-span-1">
             <div className="sticky top-24 space-y-1">
-              {STEPS.map((step) => {
-                const isActive = currentStep === step.id;
-                const isCompleted = completedSteps.includes(step.id);
-                const isLocked = !isCompleted && step.id > currentStep;
+              {STEP_CONFIGS.map((step) => {
+                const isActive = stepManager.currentStep === step.id;
+                const isCompleted = stepManager.completedSteps.includes(step.id);
+                const isLocked = !stepManager.canAccessStep(step.id);
 
                 return (
                   <motion.button
@@ -210,7 +274,7 @@ export default function App() {
           <div className="lg:col-span-3">
             <AnimatePresence mode="wait">
               <motion.div
-                key={currentStep}
+                key={stepManager.currentStep}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
@@ -218,7 +282,7 @@ export default function App() {
                 className="space-y-6"
               >
                 {/* Render current step component */}
-                {currentStep === 1 && (
+                {stepManager.currentStep === 1 && (
                   <StepProjectContext
                     procurementType={procurementType}
                     setProcurementType={setProcurementType}
@@ -236,7 +300,7 @@ export default function App() {
                   />
                 )}
 
-                {currentStep === 2 && (
+                {stepManager.currentStep === 2 && (
                   <StepProductDetails
                     productName={productName}
                     setProductName={setProductName}
@@ -267,7 +331,7 @@ export default function App() {
                   />
                 )}
 
-                {currentStep === 3 && (
+                {stepManager.currentStep === 3 && (
                   <StepSpecifications
                     productName={productName}
                     quantity={quantity}
@@ -296,13 +360,13 @@ export default function App() {
                     kpaRecommendations={kpaRecommendations}
                     setKpaRecommendations={setKpaRecommendations}
                     // Step identification
-                    currentStep={currentStep}
+                    currentStep={stepManager.currentStep}
                     onNext={handleNext}
                     onBack={handleBack}
                   />
                 )}
 
-                {currentStep === 4 && (
+                {stepManager.currentStep === 4 && (
                   <StepProjectSummary
                     procurementType={procurementType}
                     serviceProgram={serviceProgram}
@@ -321,6 +385,7 @@ export default function App() {
                     kpaSessionId={kpaSessionId}
                     setKpaSessionId={setKpaSessionId}
                     setIntakeData={setIntakeData}
+                    setKpaRecommendations={setKpaRecommendations}
                     // Callbacks
                     onEdit={(step) => setCurrentStep(step)}
                     onConfirm={handleNext}
@@ -328,7 +393,7 @@ export default function App() {
                   />
                 )}
 
-                {currentStep === 5 && (
+                {stepManager.currentStep === 5 && (
                   <StepSpecifications
                     productName={productName}
                     quantity={quantity}
@@ -357,13 +422,13 @@ export default function App() {
                     kpaRecommendations={kpaRecommendations}
                     setKpaRecommendations={setKpaRecommendations}
                     // Step identification
-                    currentStep={currentStep}
+                    currentStep={stepManager.currentStep}
                     onNext={handleNext}
                     onBack={handleBack}
                   />
                 )}
 
-                {currentStep === 6 && (
+                {stepManager.currentStep === 6 && (
                   <StepVendorSearch
                     productName={productName}
                     selectedVariants={selectedVariants}
@@ -373,12 +438,30 @@ export default function App() {
                     setSearchOutputText={setSearchOutputText}
                     searching={searching}
                     setSearching={setSearching}
+                    kpaRecommendations={kpaRecommendations}
                     onNext={handleNext}
                     onBack={handleBack}
                   />
                 )}
 
-                {currentStep === 7 && (
+                {stepManager.currentStep === 7 && (
+                  <StepRFQProcurement
+                    selectedVendors={selectedVendors}
+                    onNext={handleNext}
+                    onBack={handleBack}
+                    currentStep={stepManager.currentStep}
+                    productName={productName}
+                    budget={budget}
+                    quantity={quantity}
+                    projectScope={projectScope}
+                    procurementType={procurementType}
+                    serviceProgram={serviceProgram}
+                    technicalPOC={technicalPOC}
+                    projectKeys={selectedProject ? [selectedProject] : []}
+                  />
+                )}
+
+                {stepManager.currentStep === 8 && (
                   <StepRFQ
                     selectedProject={selectedProject}
                     procurementType={procurementType}
@@ -407,9 +490,42 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        <AnimatePresence>
+          {notifications.map((notification) => (
+            <motion.div
+              key={notification.id}
+              initial={{ opacity: 0, x: 300 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 300 }}
+              className={`flex items-center gap-3 p-4 rounded-lg shadow-lg border ${
+                notification.type === 'success' 
+                  ? 'bg-green-50 border-green-200 text-green-800'
+                  : notification.type === 'error'
+                  ? 'bg-red-50 border-red-200 text-red-800'
+                  : 'bg-blue-50 border-blue-200 text-blue-800'
+              }`}
+            >
+              {notification.type === 'success' && <CheckCircle className="h-5 w-5" />}
+              {notification.type === 'error' && <AlertCircle className="h-5 w-5" />}
+              {notification.type === 'info' && <Circle className="h-5 w-5" />}
+              <span className="text-sm font-medium">{notification.message}</span>
+              <button
+                onClick={() => removeNotification(notification.id)}
+                className="ml-2 text-gray-400 hover:text-gray-600"
+              >
+                ×
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
+
 
 
 

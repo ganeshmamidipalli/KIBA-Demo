@@ -27,7 +27,12 @@ def run_recommendations(product_name: str, budget: float, quantity: int, summary
         Dict with recommendations and metadata
     """
     try:
+        logger.info(f"run_recommendations called with: product_name={product_name}, budget={budget}, quantity={quantity}")
+        logger.info(f"Summary length: {len(summary)} characters")
+        logger.info(f"Summary preview: {summary[:200]}...")
+        
         # Check if client is available (for testing)
+        logger.info(f"Client available: {client is not None}")
         if client is None:
             logger.info("OpenAI client not available, using fallback recommendations")
             unit_price = budget / quantity if quantity > 0 else budget
@@ -75,6 +80,9 @@ def run_recommendations(product_name: str, budget: float, quantity: int, summary
                 "disclaimer": "These are fallback recommendations for testing purposes."
             }
         
+        logger.info(f"Generating recommendations with summary length: {len(summary)}")
+        logger.info(f"Summary preview: {summary[:200]}...")
+        
         payload = recs_prompt(product_name, budget, quantity, summary)
         
         # Use OpenAI responses API with structured output
@@ -101,8 +109,13 @@ def run_recommendations(product_name: str, budget: float, quantity: int, summary
         if not content:
             raise ValueError("Empty response from OpenAI")
             
+        logger.info(f"OpenAI response content: {content[:500]}...")
+        
         try:
             parsed = json.loads(content)
+            logger.info(f"Parsed recommendations: {len(parsed.get('recommendations', []))} options")
+            for i, rec in enumerate(parsed.get('recommendations', [])):
+                logger.info(f"Rec {i+1}: {rec.get('name')} - ${rec.get('estimated_price_usd')}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in recommendations: {e}")
             logger.error(f"Content: {content[:500]}")

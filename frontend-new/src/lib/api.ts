@@ -266,4 +266,97 @@ export async function getSessionData(sessionId: string) {
   return response.json();
 }
 
+// Search Query Building
+export async function buildSearchQuery(selectedVariant: any) {
+  const response = await fetch(`${API_BASE}/api/search-query/build`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      selected_variant: selectedVariant
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Search query building failed: ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
+// Web Search
+export async function webSearch(query: string, maxResults: number = 10) {
+  const response = await fetch(`${API_BASE}/api/web_search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query: query,
+      max_results: maxResults
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Web search failed: ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
+// Vendor Finder
+export async function findVendors(
+  selectedVariant: any,
+  kpaRecommendations: any = null,
+  page: number = 0,
+  pageSize: number = 10,
+  refresh: boolean = false
+) {
+  const response = await fetch(`${API_BASE}/api/vendor_finder`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      selected_variant: selectedVariant,
+      kpa_recommendations: kpaRecommendations,
+      page: page,
+      page_size: pageSize,
+      refresh: refresh
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Vendor finder failed: ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
+// RFQ Generation
+export async function generateRFQ(selectedVendors: any[], productName: string, quantity: number) {
+  const response = await fetch(`${API_BASE}/api/generate_rfq`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      selected_vendors: selectedVendors,
+      product_name: productName,
+      quantity: quantity
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`RFQ generation failed: ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
 

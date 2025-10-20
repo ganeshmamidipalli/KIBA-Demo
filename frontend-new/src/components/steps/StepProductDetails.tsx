@@ -1,12 +1,14 @@
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Upload, X, TestTube } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Separator } from "../ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import * as api from "../../lib/api";
+import { TEST_PRODUCTS, getTestProductById } from "../../lib/testProducts";
 import type { Attachment, IntakeData } from "../../types";
 import { useState } from "react";
 
@@ -78,8 +80,31 @@ export function StepProductDetails({
   
   // KPA One-Flow state
   const [startingIntake, setStartingIntake] = useState(false);
+  
+  // Test product selection
+  const [selectedTestProduct, setSelectedTestProduct] = useState<string>("");
+
+  // Handle test product selection
+  const handleTestProductSelect = (productId: string) => {
+    if (productId === "custom") {
+      setSelectedTestProduct("");
+      return;
+    }
+
+    const testProduct = getTestProductById(productId);
+    if (testProduct) {
+      setSelectedTestProduct(productId);
+      setProductName(testProduct.name);
+      setCategory(testProduct.category);
+      setQuantity(testProduct.quantity);
+      setBudget(testProduct.budget);
+      setProjectScope(testProduct.projectScope);
+      setVendors(testProduct.vendors);
+    }
+  };
 
   const handleContinue = async () => {
+    // Validate required fields
     if (!productName.trim()) {
       alert("Please enter a Product Name");
       return;
@@ -123,9 +148,29 @@ export function StepProductDetails({
       localStorage.setItem("kiba3_session_id", response.session_id);
       
       console.log("StepProductDetails: KPA One-Flow intake completed:", response);
+      console.log("StepProductDetails: Calling onNext() to proceed to next step");
       
-      // Proceed to next step
-      onNext();
+      // Prepare step data for the step manager
+      const stepData = {
+        productName,
+        category,
+        quantity,
+        budget,
+        projectScope,
+        attachments,
+        vendors,
+        kpaSessionId: response.session_id,
+        intakeData: response.intake,
+        followupAnswers: {} // Initialize empty followup answers
+      };
+      
+      console.log('StepProductDetails: Prepared stepData:', stepData);
+      console.log('StepProductDetails: productName value:', productName);
+      console.log('StepProductDetails: productName type:', typeof productName);
+      console.log('StepProductDetails: Calling onNext with stepData');
+      
+      // Proceed to next step with data
+      onNext(stepData);
     } catch (error) {
       console.error("StepProductDetails: Error starting KPA One-Flow intake:", error);
       alert("Error starting intake process. Please try again.");
@@ -340,6 +385,42 @@ export function StepProductDetails({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Test Product Selection */}
+          <Card className="border-blue-200 bg-blue-50/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <TestTube className="h-4 w-4 text-blue-600" />
+                Quick Test Products
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Select a pre-filled product for quick testing (development only)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-3">
+                <Select value={selectedTestProduct} onValueChange={handleTestProductSelect}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a test product or enter custom details" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="custom">Custom Product (Manual Entry)</SelectItem>
+                    {TEST_PRODUCTS.map((product) => (
+                      <SelectItem key={product.id} value={product.id}>
+                        {product.name} - ${parseInt(product.budget).toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                {selectedTestProduct && selectedTestProduct !== "custom" && (
+                  <div className="text-xs text-muted-foreground bg-white p-2 rounded border">
+                    <strong>Selected:</strong> {getTestProductById(selectedTestProduct)?.description}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
               <Label htmlFor="productName">Product Name <span className="text-destructive">*</span></Label>

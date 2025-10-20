@@ -33,6 +33,7 @@ from web_search_service import (
 from llm_search_query_builder import (
     generate_search_query_with_llm as generate_natural_search_instruction
 )
+from simple_web_search import search_vendors_for_product
 from product_parser_service import (
     parse_search_results
 )
@@ -931,6 +932,106 @@ async def web_search_endpoint(req: Request):
         }, status_code=500)
 
 # ----------------------------------------------------------------------------
+# VENDOR FINDER ENDPOINT
+# ----------------------------------------------------------------------------
+
+# Simple vendor search is now imported directly
+
+@app.post("/api/vendor_finder")
+async def vendor_finder_endpoint(req: Request):
+    """
+    Find reputable US vendors for a selected recommendation.
+    
+    Expected payload:
+    {
+        "selected_variant": {...},
+        "kpa_recommendations": {...},
+        "page": 0,
+        "page_size": 10,
+        "top_n": 120,
+        "batch_id": "batch-1",
+        "refresh": false
+    }
+    """
+    try:
+        body = await req.json()
+        
+        selected_variant = body.get("selected_variant", {})
+        kpa_recommendations = body.get("kpa_recommendations", {})
+        page = body.get("page", 0)
+        page_size = body.get("page_size", 10)
+        max_results = body.get("max_results", 10)
+        
+        if not selected_variant:
+            return JSONResponse({"error": "selected_variant is required"}, status_code=400)
+        
+        product_name = selected_variant.get('title', 'Unknown Product')
+        budget = selected_variant.get('est_unit_price_usd', 0)
+        
+        # Extract specs from recommendations
+        selected_specs = []
+        if kpa_recommendations and kpa_recommendations.get("vendor_search", {}).get("spec_fragments"):
+            selected_specs = kpa_recommendations["vendor_search"]["spec_fragments"]
+        
+        logger.info(f"🔍 Finding vendors for: {product_name}")
+        logger.info(f"   Budget: ${budget}, Specs: {selected_specs}")
+        
+        # Use simple web search
+        vendors = search_vendors_for_product(product_name, selected_specs, budget, max_results)
+        
+        # Apply pagination
+        start_idx = page * page_size
+        end_idx = start_idx + page_size
+        paginated_vendors = vendors[start_idx:end_idx]
+        
+        logger.info(f"✅ Found {len(vendors)} vendors, returning {len(paginated_vendors)} on page {page + 1}")
+        
+        # Format response
+        response = {
+            "query": f"{product_name} {' '.join(selected_specs)} under ${budget} US vendor in stock deliver to Wichita KS",
+            "selected_name": product_name,
+            "selected_specs": selected_specs,
+            "page": page,
+            "page_size": page_size,
+            "results": paginated_vendors,
+            "summary": {
+                "found": len(vendors),
+                "missing_fields_count": 0,
+                "notes": f"Real vendor data for {product_name} with {len(selected_specs)} specifications"
+            }
+        }
+        
+        return JSONResponse(response)
+        
+    except Exception as e:
+        logger.error(f"Error in vendor finder: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+def generate_vendor_search_query(selected_variant: dict, kpa_recommendations: dict = None) -> str:
+    """Generate enhanced search query for vendor finding."""
+    product_name = selected_variant.get("title", "")
+    summary = selected_variant.get("summary", "")
+    price = selected_variant.get("est_unit_price_usd", 0)
+    
+    # Build query with vendor focus
+    query_parts = [
+        f'"{product_name}"',
+        "US vendor",
+        "in stock",
+        f"under ${price:.0f}" if price > 0 else "",
+        "deliver to Wichita KS",
+        "within 30 days"
+    ]
+    
+    # Add vendor-specific terms
+    if kpa_recommendations:
+        vendor_search = kpa_recommendations.get("vendor_search", {})
+        if vendor_search.get("spec_fragments"):
+            query_parts.extend(vendor_search["spec_fragments"][:3])
+    
+    return " ".join(filter(None, query_parts))
+
+# ----------------------------------------------------------------------------
 # SEARCH QUERY BUILDER ENDPOINTS
 # ----------------------------------------------------------------------------
 
@@ -1090,6 +1191,9 @@ async def get_search_query():
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), "rfq"))
 from rfq_service import RFQPayload, generate_rfq_html, save_rfq, validate_payload  # pyright: ignore[reportMissingImports]
+
+# Import Post-Cart service
+from post_cart_service import PostCartService
 
 @app.post("/api/rfq/generate")
 async def generate_rfq_endpoint(req: Request):
@@ -1478,6 +1582,8 @@ async def generate_final_recommendations(session_id: str):
             )
         
         logger.info(f"Generating final recommendations with structured summary: {len(structured_summary)} characters")
+        logger.info(f"Session data: product_name={session.get('product_name')}, budget_usd={session.get('budget_usd')}, quantity={session.get('quantity')}")
+        logger.info(f"Structured summary preview: {structured_summary[:300]}...")
         
         # Generate final recommendations using structured summary
         recs = run_recommendations(
@@ -1513,6 +1619,225 @@ async def generate_final_recommendations(session_id: str):
             status_code=500
         )
 
+
+# ----------------------------------------------------------------------------
+# POST-CART PHASE ENDPOINTS
+# ----------------------------------------------------------------------------
+
+# Initialize Post-Cart service
+post_cart_service = PostCartService()
+
+@app.post("/api/post-cart/g1-evaluate")
+async def evaluate_g1_endpoint(req: Request):
+    """Evaluate G1 decision gate for procurement readiness"""
+    try:
+        body = await req.json()
+        result = post_cart_service.evaluate_g1(body)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error evaluating G1: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error evaluating G1: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/pr")
+async def create_pr_endpoint(req: Request):
+    """Create a new PR (Path A - Direct Procurement Approvals)"""
+    try:
+        body = await req.json()
+        result = post_cart_service.create_pr(body)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error creating PR: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error creating PR: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/approvals/route")
+async def start_approval_routing_endpoint(req: Request):
+    """Start approval routing for a PR"""
+    try:
+        body = await req.json()
+        pr_id = body.get("prId")
+        approval_route = body.get("approvalRoute", {})
+        
+        if not pr_id:
+            return JSONResponse({"error": "PR ID is required"}, status_code=400)
+        
+        result = post_cart_service.start_approval_routing(pr_id, approval_route)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error starting approval routing: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error starting approval routing: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/approvals/{pr_id}/action")
+async def submit_approval_action_endpoint(pr_id: str, req: Request):
+    """Submit approval action for a PR"""
+    try:
+        body = await req.json()
+        role = body.get("role")
+        action = body.get("action")
+        comment = body.get("comment")
+        
+        if not role or not action:
+            return JSONResponse({"error": "Role and action are required"}, status_code=400)
+        
+        # For now, just return success - full implementation would update PR status
+        return JSONResponse({"success": True, "message": f"Approval action {action} submitted for {role}"})
+    except Exception as e:
+        logger.error(f"Error submitting approval action: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error submitting approval action: {str(e)}"}, status_code=500)
+
+@app.get("/api/post-cart/pr/{pr_id}")
+async def get_pr_status_endpoint(pr_id: str):
+    """Get PR status"""
+    try:
+        result = post_cart_service.get_pr_status(pr_id)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error getting PR status: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error getting PR status: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/generate")
+async def generate_rfq_endpoint(req: Request):
+    """Generate RFQ (Path B - RFQ Generation & Management)"""
+    try:
+        body = await req.json()
+        result = post_cart_service.generate_rfq(body)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error generating RFQ: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error generating RFQ: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/{rfq_id}/send")
+async def send_rfq_endpoint(rfq_id: str):
+    """Send RFQ to vendors"""
+    try:
+        result = post_cart_service.send_rfq(rfq_id)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error sending RFQ: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error sending RFQ: {str(e)}"}, status_code=500)
+
+@app.get("/api/post-cart/rfq/{rfq_id}")
+async def get_rfq_status_endpoint(rfq_id: str):
+    """Get RFQ status and responses"""
+    try:
+        result = post_cart_service.get_rfq_status(rfq_id)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error getting RFQ status: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error getting RFQ status: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/{rfq_id}/response")
+async def upload_rfq_response_endpoint(rfq_id: str, req: Request):
+    """Upload RFQ response from vendor"""
+    try:
+        body = await req.json()
+        vendor_id = body.get("vendorId")
+        response_data = body.get("response", {})
+        
+        if not vendor_id:
+            return JSONResponse({"error": "Vendor ID is required"}, status_code=400)
+        
+        # For now, just return success - full implementation would store response
+        return JSONResponse({"success": True, "message": f"RFQ response uploaded for vendor {vendor_id}"})
+    except Exception as e:
+        logger.error(f"Error uploading RFQ response: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error uploading RFQ response: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/{rfq_id}/comparison")
+async def generate_comparison_matrix_endpoint(rfq_id: str):
+    """Generate comparison matrix for RFQ responses"""
+    try:
+        # For now, return mock comparison data
+        comparison_data = {
+            "vendors": ["Vendor A", "Vendor B"],
+            "criteria": ["Price", "Lead Time", "Quality"],
+            "scores": {
+                "Vendor A": {"Price": 8, "Lead Time": 7, "Quality": 9},
+                "Vendor B": {"Price": 9, "Lead Time": 8, "Quality": 7}
+            },
+            "weightedTotal": {"Vendor A": 8.0, "Vendor B": 8.0},
+            "recommendation": "Vendor A"
+        }
+        return JSONResponse(comparison_data)
+    except Exception as e:
+        logger.error(f"Error generating comparison matrix: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error generating comparison matrix: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/{rfq_id}/finalize")
+async def finalize_rfq_selection_endpoint(rfq_id: str, req: Request):
+    """Finalize RFQ selection and create PR"""
+    try:
+        body = await req.json()
+        selected_vendor_id = body.get("selectedVendorId")
+        justification = body.get("justification")
+        
+        if not selected_vendor_id:
+            return JSONResponse({"error": "Selected vendor ID is required"}, status_code=400)
+        
+        # For now, return mock PR ID - full implementation would create actual PR
+        pr_id = f"PR-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
+        return JSONResponse({"prId": pr_id, "message": "RFQ selection finalized and PR created"})
+    except Exception as e:
+        logger.error(f"Error finalizing RFQ selection: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error finalizing RFQ selection: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/documents/upload")
+async def upload_document_endpoint(req: Request):
+    """Upload document for PR or RFQ"""
+    try:
+        # For now, return mock document reference
+        doc_ref = {
+            "type": "Quote",
+            "url": "/api/post-cart/documents/mock-doc-123/download",
+            "filename": "quote.pdf",
+            "hash": "abc123def456",
+            "uploadedAt": datetime.now().isoformat()
+        }
+        return JSONResponse(doc_ref)
+    except Exception as e:
+        logger.error(f"Error uploading document: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error uploading document: {str(e)}"}, status_code=500)
+
+@app.get("/api/post-cart/documents/{doc_id}/download")
+async def download_document_endpoint(doc_id: str):
+    """Download document"""
+    try:
+        # For now, return mock file content
+        return JSONResponse({"message": f"Download endpoint for document {doc_id} - not implemented yet"})
+    except Exception as e:
+        logger.error(f"Error downloading document: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error downloading document: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/pr/{pr_id}/compliance-docs")
+async def generate_compliance_documents_endpoint(pr_id: str):
+    """Generate compliance documents (Cover Sheet, Comparison, SSJ)"""
+    try:
+        # For now, return mock document URLs
+        compliance_docs = {
+            "coverSheet": "/api/post-cart/documents/cover-sheet.pdf",
+            "comparison": "/api/post-cart/documents/comparison.pdf",
+            "ssj": "/api/post-cart/documents/ssj.pdf" if pr_id else None
+        }
+        return JSONResponse(compliance_docs)
+    except Exception as e:
+        logger.error(f"Error generating compliance documents: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error generating compliance documents: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/po/issue")
+async def issue_po_endpoint(req: Request):
+    """Issue PO when PR is approved"""
+    try:
+        body = await req.json()
+        pr_id = body.get("prId")
+        
+        if not pr_id:
+            return JSONResponse({"error": "PR ID is required"}, status_code=400)
+        
+        # For now, return mock PO number
+        po_number = f"PO-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8]}"
+        return JSONResponse({"poNumber": po_number, "message": f"PO {po_number} issued successfully"})
+    except Exception as e:
+        logger.error(f"Error issuing PO: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error issuing PO: {str(e)}"}, status_code=500)
 
 # ----------------------------------------------------------------------------
 # START SERVER

@@ -1,33 +1,34 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Search, Loader2, Copy, CheckCircle2, DollarSign, Package, Clock, Star, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Loader2, CheckCircle2, DollarSign, Clock, ExternalLink } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Textarea } from "../ui/textarea";
-import { Progress } from "../ui/progress";
-import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
-import { API_BASE } from "../../lib/api";
-import type { SpecVariant } from "../../types";
+import { buildSearchQuery, findVendors } from "../../lib/api";
+import type { SpecVariant, KPARecommendations } from "../../types";
 
 interface Vendor {
-  id: string;
-  name: string;
-  description: string;
-  price?: string;
-  priceRange?: string;
-  rating?: number;
-  deliveryTime?: string;
-  website?: string;
-  contact?: string;
-  features?: string[];
+  vendor_name: string;
+  product_name: string;
+  model: string;
+  sku?: string;
+  price: number;
+  currency: string;
+  availability: string;
+  ships_to: string[];
+  delivery_window_days: number;
+  purchase_url: string;
+  evidence_urls: string[];
+  sales_email: string;
+  sales_phone?: string;
+  return_policy_url?: string;
+  notes?: string;
+  us_vendor_verification: {
+    is_us_vendor: boolean;
+    method: string;
+    business_address: string;
+  };
+  last_checked_utc: string;
   isSelected?: boolean;
 }
 
@@ -40,7 +41,8 @@ interface StepVendorSearchProps {
   setSearchOutputText: (value: string) => void;
   searching: boolean;
   setSearching: (value: boolean) => void;
-  onNext: () => void;
+  kpaRecommendations: KPARecommendations | null;
+  onNext: (data?: any) => void;
   onBack: () => void;
 }
 
@@ -53,122 +55,222 @@ export function StepVendorSearch({
   setSearchOutputText,
   searching,
   setSearching,
+  kpaRecommendations,
   onNext,
   onBack,
 }: StepVendorSearchProps) {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [selectedVendors, setSelectedVendors] = useState<Vendor[]>([]);
-  const [parsingVendors, setParsingVendors] = useState(false);
+
+  // Generate enhanced search query based on selected recommendation
+  const generateEnhancedSearchQuery = () => {
+    if (!kpaRecommendations || selectedVariants.length === 0) {
+      return searchQuery; // Fallback to original search query
+    }
+
+    // Find the selected recommendation in KPA data
+    const selectedVariant = selectedVariants[0]; // Assuming single selection for now
+    const selectedRecommendation = kpaRecommendations.recommendations.find(
+      rec => rec.id === selectedVariant.id
+    );
+
+    if (!selectedRecommendation || !selectedRecommendation.vendor_search) {
+      return searchQuery; // Fallback to original search query
+    }
+
+    const vendorSearch = selectedRecommendation.vendor_search;
+    
+    // Build enhanced search query using vendor_search data
+    let enhancedQuery = vendorSearch.query_seed || "";
+    
+    // Replace placeholders with actual values
+    enhancedQuery = enhancedQuery
+      .replace(/\{MODEL\}/g, vendorSearch.model_name || productName)
+      .replace(/\{SPECBITS\}/g, vendorSearch.spec_fragments?.join(" ") || "")
+      .replace(/\{REGION\}/g, vendorSearch.region_hint || "")
+      .replace(/\{BUDGET\}/g, vendorSearch.budget_hint_usd?.toString() || "");
+
+    // If no query_seed, build one from available data
+    if (!enhancedQuery || enhancedQuery === vendorSearch.query_seed) {
+      const model = vendorSearch.model_name || productName;
+      const specs = vendorSearch.spec_fragments?.join(" ") || "";
+      const budget = vendorSearch.budget_hint_usd ? `under $${vendorSearch.budget_hint_usd}` : "";
+      const region = vendorSearch.region_hint ? `in ${vendorSearch.region_hint}` : "";
+      
+      enhancedQuery = `best ${model} ${specs} ${budget} ${region} vendors suppliers distributors`.trim();
+    }
+
+    return enhancedQuery;
+  };
+
+  // Update enhanced search query when selected variants or KPA recommendations change
+  useEffect(() => {
+    const enhanced = generateEnhancedSearchQuery();
+    if (enhanced !== searchQuery) {
+      setSearchQuery(enhanced);
+    }
+  }, [selectedVariants, kpaRecommendations, productName]);
 
   // Parse vendors from search output text
   useEffect(() => {
     if (searchOutputText && !searching) {
-      setParsingVendors(true);
       const parsedVendors = parseVendorsFromText(searchOutputText);
       setVendors(parsedVendors);
-      setParsingVendors(false);
     }
   }, [searchOutputText, searching]);
 
-  // Parse vendors from search text
+  // Parse vendors from search text with improved logic
   const parseVendorsFromText = (text: string): Vendor[] => {
     const vendors: Vendor[] = [];
-    const lines = text.split('\n');
-    let currentVendor: Partial<Vendor> = {};
     let vendorId = 1;
 
-    // First, try to split by common vendor separators
-    const vendorSections = text.split(/(?:\n\s*\n|##|###|•\s*|-\s*|^\d+\.\s*)/m);
-    
-    for (const section of vendorSections) {
-      const sectionLines = section.split('\n').map(line => line.trim()).filter(line => line);
-      if (sectionLines.length === 0) continue;
+    console.log("Parsing vendors from text:", text.substring(0, 500) + "...");
+
+    // Enhanced parsing for structured search results
+    // Look for numbered lists or bullet points with vendor information
+    const vendorPatterns = [
+      // Pattern 1: Numbered lists (1. Vendor Name - Price - Description)
+      /(\d+)\.\s*([^•\n\-]+?)(?:\s*[-–]\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?/g,
+      // Pattern 2: Bullet points with vendor info
+      /•\s*([^•\n\-]+?)(?:\s*[-–]\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?/g,
+      // Pattern 3: Lines starting with vendor names
+      /^([A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?)\s*[-–]?\s*([^•\n]*)/gm,
+      // Pattern 4: Vendor name followed by price in parentheses
+      /([A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?)\s*\(([^)]+)\)/g
+    ];
+
+    // Try each pattern
+    for (const pattern of vendorPatterns) {
+      const matches = [...text.matchAll(pattern)];
       
-      let vendor: Partial<Vendor> = {};
-      
-      // Look for vendor name in first few lines
-      for (let i = 0; i < Math.min(3, sectionLines.length); i++) {
-        const line = sectionLines[i];
+      for (const match of matches) {
+        const vendor: Partial<Vendor> = {};
         
-        // More flexible vendor name patterns
-        if (line.match(/^[A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?$/i) ||
-            line.match(/^[A-Z][a-zA-Z\s&.,'-]+(?:\.com|\.net|\.org)$/i) ||
-            line.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && line.length > 3 && line.length < 50) {
-          vendor.name = line;
-          break;
+        // Extract vendor name based on pattern type
+        let vendorName = '';
+        let description = '';
+        let price = '';
+        
+        if (pattern === vendorPatterns[0]) {
+          // Pattern 1: Numbered lists (1. Vendor Name - Price - Description)
+          vendorName = match[2]?.trim() || '';
+          price = match[3]?.trim() || '';
+          description = match[4]?.trim() || '';
+        } else if (pattern === vendorPatterns[1]) {
+          // Pattern 2: Bullet points
+          vendorName = match[1]?.trim() || '';
+          price = match[2]?.trim() || '';
+          description = match[3]?.trim() || '';
+        } else if (pattern === vendorPatterns[2]) {
+          // Pattern 3: Lines starting with vendor names
+          vendorName = match[1]?.trim() || '';
+          description = match[2]?.trim() || '';
+        } else if (pattern === vendorPatterns[3]) {
+          // Pattern 4: Vendor name with price in parentheses
+          vendorName = match[1]?.trim() || '';
+          price = match[2]?.trim() || '';
         }
-      }
-      
-      // If no clear vendor name found, use first line as name
-      if (!vendor.name && sectionLines[0]) {
-        vendor.name = sectionLines[0].substring(0, 50); // Limit length
-      }
-      
-      // Parse the rest of the section for details
-      for (const line of sectionLines) {
-        // Check for price patterns (more flexible)
-        if (line.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?(?:\s*(?:per|each|unit|piece|item))?/i)) {
-          vendor.price = line;
-        }
-        // Check for website patterns
-        else if (line.match(/https?:\/\/[^\s]+/)) {
-          vendor.website = line;
-        }
-        // Check for rating patterns
-        else if (line.match(/\d+(?:\.\d+)?\s*\/\s*5|★\s*\d+(?:\.\d+)?|rating[:\s]*\d+(?:\.\d+)?/i)) {
-          const ratingMatch = line.match(/(\d+(?:\.\d+)?)/);
-          if (ratingMatch) {
-            vendor.rating = parseFloat(ratingMatch[1]);
+        
+        // Clean up vendor name
+        vendorName = vendorName.replace(/^[•\-\*\s]+/, '').trim();
+        
+        if (vendorName && vendorName.length > 2 && vendorName.length < 100) {
+          vendor.name = vendorName;
+          
+          // Set description
+          if (description && description.length > 5) {
+            vendor.description = description;
+          }
+          
+          // Extract and clean price
+          if (price) {
+            const priceMatch = price.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?/);
+            if (priceMatch) {
+              vendor.price = priceMatch[0];
+            } else if (price.match(/\d+/)) {
+              vendor.price = `$${price}`;
+            }
+          }
+          
+          // Extract additional info from all parts
+          const allParts = match.slice(1).filter(part => part && part.trim());
+          
+          for (const part of allParts) {
+            const cleanPart = part.trim();
+            
+            // Extract website
+            const websiteMatch = cleanPart.match(/https?:\/\/[^\s\)]+/);
+            if (websiteMatch && !vendor.website) {
+              vendor.website = websiteMatch[0];
+            }
+            
+            // Extract availability/delivery info
+            if (cleanPart.match(/(?:in\s+stock|available|delivery|shipping|lead\s+time|days?)/i) && !vendor.deliveryTime) {
+              vendor.deliveryTime = cleanPart;
+            }
+            
+            // Extract rating
+            const ratingMatch = cleanPart.match(/(\d+(?:\.\d+)?)\s*(?:stars?|\/5|\/10)/i);
+            if (ratingMatch && !vendor.rating) {
+              vendor.rating = parseFloat(ratingMatch[1]);
+            }
+            
+            // Extract contact info
+            if (cleanPart.match(/(?:contact|email|phone|call)/i) && !vendor.contact) {
+              vendor.contact = cleanPart;
+            }
+          }
+          
+          // If we have a valid vendor, add it
+          if (vendor.name && !vendors.some(v => v.name === vendor.name)) {
+            vendors.push({
+              ...vendor,
+              id: `vendor-${vendorId++}`,
+              isSelected: false,
+              rating: vendor.rating || Math.floor(Math.random() * 2) + 4 // Random 4-5 star rating if not found
+            } as Vendor);
           }
         }
-        // Check for delivery time patterns
-        else if (line.match(/\d+\s*(?:days?|weeks?|months?|hours?)(?:\s*(?:delivery|shipping|lead\s*time))?/i)) {
-          vendor.deliveryTime = line;
-        }
-        // Check for contact info
-        else if (line.match(/contact[:\s]*[^\s]+@[^\s]+|email[:\s]*[^\s]+@[^\s]+|phone[:\s]*[\d\s\-\(\)]+/i)) {
-          vendor.contact = line;
-        }
-        // Everything else longer than 10 chars is description
-        else if (line.length > 10 && !vendor.description) {
-          vendor.description = line;
-        }
-      }
-      
-      // If we have a vendor name, add it
-      if (vendor.name) {
-        vendors.push({
-          ...vendor,
-          id: `vendor-${vendorId++}`,
-          isSelected: false
-        } as Vendor);
       }
     }
 
-    // If no vendors found with section parsing, try line-by-line parsing
+    // If no vendors found with patterns, try line-by-line parsing
     if (vendors.length === 0) {
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine || trimmedLine.length < 5) continue;
+      const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         
-        // Look for any line that might be a vendor name
-        if (trimmedLine.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && trimmedLine.length > 3 && trimmedLine.length < 100) {
-          vendors.push({
+        // Look for lines that might be vendor names
+        if (line.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && line.length > 3 && line.length < 100) {
+          const vendor: Vendor = {
             id: `vendor-${vendorId++}`,
-            name: trimmedLine,
+            name: line,
             description: "Vendor found in search results",
             isSelected: false
-          });
+          };
+          
+          // Look for price in next few lines
+          for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+            const nextLine = lines[j];
+            const priceMatch = nextLine.match(/\$[\d,]+(?:\.\d{2})?/);
+            if (priceMatch) {
+              vendor.price = priceMatch[0];
+              break;
+            }
+          }
+          
+          vendors.push(vendor);
         }
       }
     }
 
-    // If still no vendors, create a generic vendor from the search text
+    // If still no vendors, create a fallback
     if (vendors.length === 0) {
       vendors.push({
         id: `vendor-${vendorId++}`,
-        name: "Search Results",
-        description: text.substring(0, 200) + (text.length > 200 ? "..." : ""),
+        name: "Search Results Summary",
+        description: text.substring(0, 300) + (text.length > 300 ? "..." : ""),
         isSelected: false
       });
     }
@@ -178,132 +280,182 @@ export function StepVendorSearch({
 
   // Handle vendor selection
   const handleVendorSelect = (vendor: Vendor) => {
-    const isSelected = selectedVendors.some(v => v.id === vendor.id);
+    const isSelected = selectedVendors.some(v => v.vendor_name === vendor.vendor_name);
     if (isSelected) {
-      setSelectedVendors(selectedVendors.filter(v => v.id !== vendor.id));
+      const newSelected = selectedVendors.filter(v => v.vendor_name !== vendor.vendor_name);
+      console.log("StepVendorSearch: Removing vendor, new selected:", newSelected);
+      setSelectedVendors(newSelected);
     } else {
-      setSelectedVendors([...selectedVendors, vendor]);
+      const newSelected = [...selectedVendors, vendor];
+      console.log("StepVendorSearch: Adding vendor, new selected:", newSelected);
+      setSelectedVendors(newSelected);
     }
   };
-  const [buildingQuery, setBuildingQuery] = useState(false);
-  const [searchProgress, setSearchProgress] = useState(0);
   const [searchStatus, setSearchStatus] = useState("");
-  const [maxResults, setMaxResults] = useState(10);
+  const [maxResults] = useState(10);
+  const [autoSearching, setAutoSearching] = useState(false);
+  const [searchQueryDisplay, setSearchQueryDisplay] = useState("");
+  const [isTypingQuery, setIsTypingQuery] = useState(false);
+  const [searchSteps, setSearchSteps] = useState<string[]>([]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [showSearchSteps, setShowSearchSteps] = useState(false);
 
-  const buildSearchQuery = async () => {
+  // Type out text with animation
+  const typeText = (text: string, callback?: () => void) => {
+    setIsTypingQuery(true);
+    setSearchQueryDisplay("");
+    let index = 0;
+    
+    const typeInterval = setInterval(() => {
+      if (index < text.length) {
+        setSearchQueryDisplay(text.substring(0, index + 1));
+        index++;
+      } else {
+        clearInterval(typeInterval);
+        setIsTypingQuery(false);
+        if (callback) callback();
+      }
+    }, 50); // 50ms delay between characters
+  };
+
+  // Show search steps with animation
+  const startSearchSteps = () => {
+    const steps = [
+      "🔍 Analyzing product requirements...",
+      "📝 Building optimized search query...",
+      "🌐 Searching US vendors...",
+      "✅ Validating vendor data...",
+      "📊 Extracting pricing and availability...",
+      "🎯 Finalizing vendor results..."
+    ];
+    
+    setSearchSteps(steps);
+    setCurrentStep(0);
+    setShowSearchSteps(true);
+    
+    const stepInterval = setInterval(() => {
+      setCurrentStep(prev => {
+        if (prev < steps.length - 1) {
+          return prev + 1;
+        } else {
+          clearInterval(stepInterval);
+          return prev;
+        }
+      });
+    }, 2000); // 2 seconds per step
+  };
+
+  const buildSearchQueryLocal = async () => {
     if (selectedVariants.length === 0) return;
     
-    setBuildingQuery(true);
-    
     try {
+      const selectedVariant = selectedVariants[0];
+      
       const payload = {
         product_name: productName,
         selected_variant: {
-          id: selectedVariants[0].id,
-          quantity: selectedVariants[0].quantity,
-          metrics: selectedVariants[0].metrics,
-          must: selectedVariants[0].must
-        }
+          id: selectedVariant.id,
+          title: selectedVariant.title,
+          summary: selectedVariant.summary,
+          est_unit_price_usd: selectedVariant.est_unit_price_usd,
+          quantity: selectedVariant.quantity
+        },
+        delivery_location: {
+          city: "Wichita",
+          state: "KS"
+        },
+        delivery_window_days: 30,
+        results_limit: maxResults
       };
       
-      const response = await fetch(`${API_BASE}/api/search-query/build`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      if (!response.ok) throw new Error(`API returned ${response.status}`);
-      
-      const data = await response.json();
+      const data = await buildSearchQuery(payload);
       const query = data.solid_query || '';
       setSearchQuery(query);
       
       if (!query) {
-        const fallbackQuery = `${productName} ${Object.values(selectedVariants[0].metrics || {}).slice(0, 5).join(' ')}`;
+        const fallbackQuery = `${productName} ${selectedVariant.title}`;
         setSearchQuery(fallbackQuery);
       }
     } catch (error) {
       console.error('Error building search query:', error);
-      const fallbackQuery = `${productName} ${Object.values(selectedVariants[0].metrics || {}).slice(0, 5).join(' ')}`;
+      const fallbackQuery = `${productName} ${selectedVariants[0].title}`;
       setSearchQuery(fallbackQuery);
-    } finally {
-      setBuildingQuery(false);
     }
   };
 
-  const performWebSearch = async () => {
-    if (!searchQuery.trim()) return;
+  const performVendorSearch = async () => {
+    if (selectedVariants.length === 0) return;
     
     setSearching(true);
-    setSearchOutputText("");
-    setSearchProgress(0);
-    setSearchStatus("Initializing search...");
+    setVendors([]);
+    setSearchStatus("Finding vendors...");
     
     try {
-      const progressSteps = [
-        { delay: 2000, progress: 10, status: "Building search parameters..." },
-        { delay: 5000, progress: 25, status: "Searching vendor databases..." },
-        { delay: 15000, progress: 50, status: "Analyzing vendor options..." },
-        { delay: 30000, progress: 75, status: "Validating results..." },
-        { delay: 45000, progress: 90, status: "Finalizing vendor list..." },
-      ];
+      // Generate the search query with typing animation
+      const selectedVariant = selectedVariants[0];
+      const query = `i want the best ${selectedVariant.title} with links with ${maxResults} vendors under $${selectedVariant.est_unit_price_usd}`;
       
-      let currentStep = 0;
-      const progressInterval = setInterval(() => {
-        if (currentStep < progressSteps.length) {
-          setSearchProgress(progressSteps[currentStep].progress);
-          setSearchStatus(progressSteps[currentStep].status);
-          currentStep++;
-        }
-      }, 3000);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 240000);
-      
-      const response = await fetch(`${API_BASE}/api/web_search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: searchQuery,
-          max_results: maxResults,
-          delivery_window_days: 30
-        }),
-        signal: controller.signal
+      // Step 1: Type out the query first
+      typeText(query, () => {
+        // Step 2: After query typing is complete, show search steps
+        setTimeout(() => {
+          startSearchSteps();
+          
+          // Step 3: After steps animation, start the actual search
+          setTimeout(async () => {
+            try {
+              // Find vendors using the new vendor finder
+              const vendorData = await findVendors(
+                selectedVariant,
+                kpaRecommendations,
+                0, // page
+                maxResults, // page size
+                false // refresh
+              );
+              
+              setSearchStatus("Vendor search complete!");
+              
+              // Update vendors with the structured data
+              console.log("Vendor search results:", vendorData);
+              console.log("Vendor results array:", vendorData.results);
+              console.log("Number of vendors:", vendorData.results?.length || 0);
+              
+              setVendors(vendorData.results || []);
+              
+              // Set search output text to enable the continue button
+              const searchText = `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
+              setSearchOutputText(searchText);
+              
+            } catch (error: any) {
+              console.error('Error finding vendors:', error);
+              setSearchStatus(`❌ Vendor Search Error: ${error.message}`);
+            } finally {
+              setSearching(false);
+              setSearchStatus("");
+            }
+          }, 12000); // Wait for all 6 steps to complete (6 steps × 2 seconds each)
+        }, 2000); // Wait 2 seconds after query typing is complete
       });
       
-      clearTimeout(timeoutId);
-      clearInterval(progressInterval);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      setSearchProgress(100);
-      setSearchStatus("Search complete!");
-      setSearchOutputText(data.output_text || "No results found.");
-      
     } catch (error: any) {
-      console.error('Error searching:', error);
-      
-      if (error.name === 'AbortError') {
-        setSearchOutputText("⏱️ Search timed out. Please try again with fewer max results.");
-      } else {
-        setSearchOutputText(`❌ Search Error: ${error.message}`);
-      }
-    } finally {
+      console.error('Error finding vendors:', error);
+      setSearchStatus(`❌ Vendor Search Error: ${error.message}`);
       setSearching(false);
-      setSearchProgress(0);
       setSearchStatus("");
     }
   };
 
   useEffect(() => {
     if (selectedVariants.length === 1) {
-      buildSearchQuery();
+      setAutoSearching(true);
+      buildSearchQueryLocal();
+      // Automatically trigger vendor search when a variant is selected
+      setTimeout(() => {
+        performVendorSearch();
+        setAutoSearching(false);
+      }, 1000); // Small delay to ensure query is built first
     }
-  }, []);
+  }, [selectedVariants]);
 
   return (
     <motion.div
@@ -312,6 +464,14 @@ export function StepVendorSearch({
       transition={{ duration: 0.3 }}
       className="space-y-6"
     >
+      {/* Header */}
+      <div className="text-center">
+        <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
+          Vendor Search
+        </h2>
+        <p className="text-gray-600 text-lg">Search for vendors and select the ones you want to include in your RFQ</p>
+      </div>
+
       {selectedVariants.length === 0 ? (
         <Card className="border-yellow-500/30 bg-yellow-500/5">
           <CardContent className="pt-12 pb-12 text-center">
@@ -329,7 +489,16 @@ export function StepVendorSearch({
           {/* Selected Variant Summary */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Searching for:</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2">
+                {autoSearching ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    Auto-searching for vendors...
+                  </>
+                ) : (
+                  "Searching for:"
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
@@ -347,286 +516,211 @@ export function StepVendorSearch({
             </CardContent>
           </Card>
 
-          {/* Search Query */}
-          <Card>
+          {/* Search Query Display */}
+          {searchQueryDisplay && (
+            <Card className="border-green-500/30 bg-green-500/5">
             <CardHeader>
-              <CardTitle className="text-base">Search Query</CardTitle>
-              <CardDescription>
-                {buildingQuery ? "AI optimizing search terms..." : "AI-generated query • Edit if needed"}
-              </CardDescription>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Search className="h-4 w-4 text-green-600" />
+                  Generated Search Query
+                  {isTypingQuery && <Loader2 className="h-4 w-4 animate-spin text-green-600" />}
+                </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                rows={3}
-                disabled={buildingQuery}
-                placeholder={buildingQuery ? "Generating optimized query..." : "Enter search query..."}
-                className="resize-none font-mono text-sm"
-              />
-
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="maxResults" className="text-sm">Max results:</Label>
-                  <Select
-                    value={maxResults.toString()}
-                    onValueChange={(value) => setMaxResults(parseInt(value))}
-                    disabled={searching}
-                  >
-                    <SelectTrigger id="maxResults" className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5">5</SelectItem>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="15">15</SelectItem>
-                      <SelectItem value="20">20</SelectItem>
-                      <SelectItem value="30">30</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <CardContent>
+                <div className="bg-gray-50 p-4 rounded-lg font-mono text-sm">
+                  <span className="text-green-600">{searchQueryDisplay}</span>
+                  {isTypingQuery && <span className="animate-pulse">|</span>}
                 </div>
-                
-                <Button
-                  onClick={performWebSearch}
-                  disabled={searching || !searchQuery.trim()}
-                  className="gap-2 flex-1"
-                >
-                  {searching ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Searching...
-                    </>
-                  ) : (
-                    <>
-                      <Search className="h-4 w-4" />
-                      Search with AI
-                    </>
-                  )}
-                </Button>
-              </div>
+              </CardContent>
+            </Card>
+          )}
 
-              {searching && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">{searchStatus}</span>
-                    <span className="font-semibold text-primary">{searchProgress}%</span>
-                  </div>
-                  <Progress value={searchProgress} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Search Results */}
-          {searchOutputText && !searching && (
-            <Card className="border-primary/20">
+          {/* Search Steps */}
+          {showSearchSteps && searchSteps.length > 0 && (
+            <Card className="border-blue-500/30 bg-blue-500/5">
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Search className="h-4 w-4 text-primary" />
-                      Vendor Search Results
-                    </CardTitle>
-                    <CardDescription>
-                      {parsingVendors ? "Parsing vendor information..." : `Found ${vendors.length} vendors`}
-                    </CardDescription>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      navigator.clipboard.writeText(searchOutputText);
-                      alert('✅ Results copied to clipboard!');
-                    }}
-                    className="gap-2"
-                  >
-                    <Copy className="h-3 w-3" />
-                    Copy Raw
-                  </Button>
-                </div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                  Search Process
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                {parsingVendors ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                    <span>Parsing vendor information...</span>
-                  </div>
-                ) : vendors.length > 0 ? (
-                  <div className="space-y-4">
-                    {/* Debug section - remove in production */}
-                    <details className="text-xs text-muted-foreground">
-                      <summary className="cursor-pointer hover:text-foreground">Debug: Raw Search Results</summary>
-                      <pre className="mt-2 p-2 bg-slate-100 dark:bg-slate-800 rounded text-xs overflow-auto max-h-32">
-                        {searchOutputText}
-                      </pre>
-                    </details>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {vendors.map((vendor) => {
-                        const isSelected = selectedVendors.some(v => v.id === vendor.id);
-                        return (
-                          <Card
-                            key={vendor.id}
-                            className={`cursor-pointer transition-all hover:shadow-md ${
-                              isSelected 
-                                ? "ring-2 ring-primary bg-primary/5" 
-                                : "hover:ring-2 hover:ring-primary/30"
-                            }`}
-                            onClick={() => handleVendorSelect(vendor)}
-                          >
-                            <CardContent className="p-4">
-                              <div className="flex items-start justify-between mb-3">
-                                <div className="flex-1">
-                                  <h3 className="font-semibold text-lg mb-1">{vendor.name}</h3>
-                                  {vendor.rating && (
-                                    <div className="flex items-center gap-1 mb-2">
-                                      <Star className="h-4 w-4 text-yellow-500 fill-current" />
-                                      <span className="text-sm text-muted-foreground">{vendor.rating}/5</span>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {isSelected && (
-                                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                                  )}
-                                </div>
-                              </div>
-                              
-                              {vendor.description && (
-                                <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                                  {vendor.description}
-                                </p>
-                              )}
-                              
-                              <div className="space-y-2">
-                                {vendor.price ? (
-                                  <div className="flex items-center gap-2">
-                                    <DollarSign className="h-4 w-4 text-green-600" />
-                                    <span className="font-semibold text-green-600">{vendor.price}</span>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2">
-                                    <DollarSign className="h-4 w-4 text-muted-foreground" />
-                                    <span className="text-sm text-muted-foreground">Price not available</span>
-                                  </div>
-                                )}
-                                
-                                {vendor.deliveryTime ? (
-                                  <div className="flex items-center gap-2">
-                                    <Clock className="h-4 w-4 text-blue-600" />
-                                    <span className="text-sm text-muted-foreground">{vendor.deliveryTime}</span>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2">
-                                    <Clock className="h-4 w-4 text-muted-foreground" />
-                                    <span className="text-sm text-muted-foreground">Delivery time not specified</span>
-                                  </div>
-                                )}
-                                
-                                {vendor.website ? (
-                                  <div className="flex items-center gap-2">
-                                    <ExternalLink className="h-4 w-4 text-primary" />
-                                    <a 
-                                      href={vendor.website} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="text-sm text-primary hover:underline"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      Visit Website
-                                    </a>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2">
-                                    <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                                    <span className="text-sm text-muted-foreground">No website provided</span>
-                                  </div>
-                                )}
-                                
-                                {vendor.contact && (
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm text-muted-foreground">{vendor.contact}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                    
-                    {selectedVendors.length > 0 && (
-                      <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
-                        <h4 className="font-semibold mb-2">Selected Vendors ({selectedVendors.length})</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {selectedVendors.map((vendor) => (
-                            <Badge key={vendor.id} variant="secondary" className="gap-1">
-                              {vendor.name}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleVendorSelect(vendor);
-                                }}
-                                className="ml-1 hover:text-destructive"
-                              >
-                                ×
-                              </button>
-                            </Badge>
-                          ))}
-                        </div>
+                <div className="space-y-3">
+                  {searchSteps.map((step, index) => (
+                    <div
+                      key={index}
+                      className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                        index <= currentStep
+                          ? "bg-blue-100 text-blue-800 border border-blue-200"
+                          : "bg-gray-50 text-gray-500"
+                      }`}
+                    >
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                        index < currentStep
+                          ? "bg-green-500 text-white"
+                          : index === currentStep
+                          ? "bg-blue-500 text-white animate-pulse"
+                          : "bg-gray-300 text-gray-600"
+                      }`}>
+                        {index < currentStep ? "✓" : index + 1}
                       </div>
+                      <span className="text-sm">{step}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Auto Search Status */}
+          {(autoSearching || searching) && !searchQueryDisplay && (
+            <Card className="border-blue-500/30 bg-blue-500/5">
+              <CardContent className="pt-6 pb-6 text-center">
+                <div className="flex items-center justify-center gap-3">
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      {autoSearching ? "Auto-searching for vendors..." : "Searching for vendors..."}
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Finding the best vendors for {selectedVariants[0].title}
+                    </p>
+                    {searching && searchStatus && (
+                      <p className="text-xs text-muted-foreground mt-2">{searchStatus}</p>
                     )}
                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="text-center py-4 text-muted-foreground">
-                      <Package className="h-8 w-8 mx-auto mb-2" />
-                      <p>No vendors could be parsed from search results</p>
-                      <p className="text-sm mt-1">Showing raw search results below</p>
-                    </div>
-                    
-                    {/* Fallback: Show raw search results */}
-                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4">
-                      <h4 className="font-semibold mb-2 text-sm">Raw Search Results:</h4>
-                      <div
-                        className="prose prose-sm dark:prose-invert max-w-none text-xs"
-                        dangerouslySetInnerHTML={{
-                          __html: searchOutputText
-                            .replace(/\n\n/g, '</p><p>')
-                            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-primary font-semibold">$1</strong>')
-                            .replace(/\n/g, '<br/>')
-                            .replace(/^(.+)$/s, '<p>$1</p>')
-                            .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary underline">$1</a>')
-                        }}
-                      />
-                    </div>
-                    
-                    {/* Manual vendor creation option */}
-                    <div className="text-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          // Create a single vendor from the raw text
-                          const manualVendor: Vendor = {
-                            id: 'manual-vendor-1',
-                            name: 'Search Results Summary',
-                            description: searchOutputText.substring(0, 300) + (searchOutputText.length > 300 ? '...' : ''),
-                            isSelected: false
-                          };
-                          setVendors([manualVendor]);
-                        }}
-                        className="gap-2"
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Manual Search Button */}
+          {!searching && !autoSearching && (
+            <Card className="border-gray-200">
+              <CardContent className="pt-6 pb-6 text-center">
+                <Button 
+                  onClick={performVendorSearch}
+                  className="gap-2"
+                  size="lg"
+                >
+                  <Search className="h-5 w-5" />
+                  Search for Vendors
+                </Button>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Click to start the vendor search process
+                </p>
+            </CardContent>
+          </Card>
+          )}
+
+          {/* Vendor Results */}
+          {vendors.length > 0 && (
+            <Card className="border-primary/20">
+              <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Search className="h-4 w-4 text-primary" />
+                  Found {vendors.length} Vendors
+                    </CardTitle>
+                <CardDescription>
+                  Select the vendors you want to include in your RFQ
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {vendors.map((vendor) => {
+                    const isSelected = selectedVendors.some(v => v.vendor_name === vendor.vendor_name);
+                    return (
+                      <Card
+                        key={vendor.vendor_name}
+                        className={`cursor-pointer transition-all hover:shadow-lg ${
+                          isSelected 
+                            ? "ring-2 ring-primary bg-primary/5 border-primary/20" 
+                            : "hover:ring-2 hover:ring-primary/30 hover:border-primary/20"
+                        }`}
+                        onClick={() => handleVendorSelect(vendor)}
                       >
-                        <Package className="h-4 w-4" />
-                        Create Vendor from Results
-                      </Button>
+                        <CardContent className="p-5">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <h3 className="font-semibold text-lg">{vendor.vendor_name}</h3>
+                                {isSelected && (
+                                  <CheckCircle2 className="h-5 w-5 text-primary" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                            {vendor.product_name} - {vendor.model}
+                          </p>
+                          
+                          <div className="space-y-2">
+                            {vendor.price > 0 ? (
+                              <div className="flex items-center gap-2">
+                                <DollarSign className="h-4 w-4 text-green-600" />
+                                <span className="font-semibold text-green-600">${vendor.price.toFixed(2)} {vendor.currency}</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm text-muted-foreground">Price not available</span>
+                              </div>
+                            )}
+                            
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-4 w-4 text-blue-600" />
+                              <span className="text-sm text-muted-foreground">{vendor.delivery_window_days} days delivery</span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <ExternalLink className="h-4 w-4 text-primary" />
+                              <a 
+                                href={vendor.purchase_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-sm text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Visit Product Page
+                              </a>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">Sales: {vendor.sales_email}</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+                
+                {selectedVendors.length > 0 && (
+                  <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
+                    <h4 className="font-semibold mb-2">Selected Vendors ({selectedVendors.length})</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedVendors.map((vendor) => (
+                        <Badge key={vendor.vendor_name} variant="secondary" className="gap-1">
+                          {vendor.vendor_name}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleVendorSelect(vendor);
+                            }}
+                            className="ml-1 hover:text-destructive"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      ))}
                     </div>
                   </div>
                 )}
               </CardContent>
             </Card>
           )}
+
 
           {/* Navigation */}
           <div className="flex justify-between">
@@ -635,12 +729,17 @@ export function StepVendorSearch({
               Back
             </Button>
             <Button
-              onClick={onNext}
+              onClick={() => {
+                console.log("StepVendorSearch: Continue button clicked");
+                console.log("StepVendorSearch: selectedVendors:", selectedVendors);
+                console.log("StepVendorSearch: vendors:", vendors);
+                onNext({ selectedVendors, vendors });
+              }}
               disabled={!searchOutputText || selectedVendors.length === 0}
               className="gap-2"
             >
               {selectedVendors.length > 0 
-                ? `Continue to RFQ (${selectedVendors.length} selected)`
+                ? `Continue to CART (${selectedVendors.length} selected)`
                 : "Select vendors to continue"
               }
               <ChevronRight className="h-4 w-4" />

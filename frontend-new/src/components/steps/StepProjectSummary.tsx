@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Edit3, CheckCircle2, AlertCircle, Loader2, FileText, Calendar, DollarSign, Users, Package } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -32,6 +32,7 @@ interface StepProjectSummaryProps {
   kpaSessionId: string | null;
   setKpaSessionId: (value: string | null) => void;
   setIntakeData: (value: IntakeData | null) => void;
+  setKpaRecommendations: (value: any) => void;
   
   // Callbacks
   onEdit: (step: number) => void;
@@ -66,6 +67,7 @@ export function StepProjectSummary({
   const [comprehensiveSummary, setComprehensiveSummary] = useState<string | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
 
+
   // Fetch comprehensive summary on mount
   useEffect(() => {
     const fetchSummary = async () => {
@@ -87,20 +89,17 @@ export function StepProjectSummary({
 
   const handleConfirm = async () => {
     setIsConfirming(true);
+    
+    console.log("StepProjectSummary: Confirming project summary...");
+    console.log("Session ID:", kpaSessionId);
+    
     try {
-      // Generate final recommendations
-      const response = await api.generateFinalRecommendations(kpaSessionId || '');
-      
-      console.log("StepProjectSummary: Final recommendations generated:", response);
-      
-      // Add a small delay to show the generating state
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Proceed to next step (specifications with recommendations)
+      // Just proceed to next step - recommendations will be generated there
       onConfirm();
+      
     } catch (error) {
-      console.error("StepProjectSummary: Error generating final recommendations:", error);
-      alert("Error generating final recommendations. Please try again.");
+      console.error("StepProjectSummary: Error:", error);
+      alert("Error proceeding to recommendations. Please try again.");
     } finally {
       setIsConfirming(false);
     }
@@ -317,6 +316,7 @@ export function StepProjectSummary({
         </CardContent>
       </Card>
 
+
       {/* Action Buttons */}
       <div className="flex justify-between items-center pt-6 border-t border-slate-200 dark:border-slate-700">
         <Button 
@@ -335,11 +335,11 @@ export function StepProjectSummary({
           {isConfirming ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Generating Recommendations...
+              Proceeding...
             </>
           ) : (
             <>
-              Confirm & Generate Recommendations
+              Confirm & Continue
               <ChevronRight className="h-4 w-4" />
             </>
           )}

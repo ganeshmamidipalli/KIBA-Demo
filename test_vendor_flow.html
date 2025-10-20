@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vendor Selection Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        .vendor-card { border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .selected { background-color: #e7f3ff; border-color: #007bff; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Vendor Selection Flow Test</h1>
+    
+    <div class="test-section info">
+        <h3>Test Scenario: User selects 2 vendors and proceeds to RFQ + Procurement</h3>
+        <p>This test simulates the complete flow from vendor selection to RFQ generation.</p>
+    </div>
+
+    <div class="test-section">
+        <h3>Step 1: Mock Vendor Data</h3>
+        <div id="vendor-list">
+            <div class="vendor-card" data-vendor="vendor1">
+                <h4>Dell Technologies</h4>
+                <p>Product: Dell Precision 7780 Workstation</p>
+                <p>Price: $17,000</p>
+                <p>Contact: sales@dell.com</p>
+                <button onclick="selectVendor('vendor1')">Select Vendor</button>
+            </div>
+            <div class="vendor-card" data-vendor="vendor2">
+                <h4>CDW Corporation</h4>
+                <p>Product: Dell Precision 7780 Workstation</p>
+                <p>Price: $16,500</p>
+                <p>Contact: sales@cdw.com</p>
+                <button onclick="selectVendor('vendor2')">Select Vendor</button>
+            </div>
+            <div class="vendor-card" data-vendor="vendor3">
+                <h4>Insight Enterprises</h4>
+                <p>Product: Dell Precision 7780 Workstation</p>
+                <p>Price: $17,200</p>
+                <p>Contact: sales@insight.com</p>
+                <button onclick="selectVendor('vendor3')">Select Vendor</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h3>Step 2: Selected Vendors</h3>
+        <div id="selected-vendors">
+            <p>No vendors selected yet</p>
+        </div>
+        <button onclick="proceedToRFQ()" id="continue-btn" disabled>Continue to RFQ + Procurement</button>
+    </div>
+
+    <div class="test-section" id="rfq-section" style="display: none;">
+        <h3>Step 3: RFQ + Procurement Doc Approval</h3>
+        <div id="rfq-vendors"></div>
+        <button onclick="generateRFQ()" id="generate-rfq-btn">Generate RFQ Documents</button>
+        <div id="rfq-status"></div>
+    </div>
+
+    <script>
+        let selectedVendors = [];
+        
+        const mockVendors = {
+            vendor1: {
+                id: 'vendor1',
+                name: 'Dell Technologies',
+                productName: 'Dell Precision 7780 Workstation',
+                price: 17000,
+                contact: 'sales@dell.com',
+                website: 'https://dell.com'
+            },
+            vendor2: {
+                id: 'vendor2',
+                name: 'CDW Corporation',
+                productName: 'Dell Precision 7780 Workstation',
+                price: 16500,
+                contact: 'sales@cdw.com',
+                website: 'https://cdw.com'
+            },
+            vendor3: {
+                id: 'vendor3',
+                name: 'Insight Enterprises',
+                productName: 'Dell Precision 7780 Workstation',
+                price: 17200,
+                contact: 'sales@insight.com',
+                website: 'https://insight.com'
+            }
+        };
+
+        function selectVendor(vendorId) {
+            const vendor = mockVendors[vendorId];
+            const card = document.querySelector(`[data-vendor="${vendorId}"]`);
+            
+            if (selectedVendors.find(v => v.id === vendorId)) {
+                // Deselect
+                selectedVendors = selectedVendors.filter(v => v.id !== vendorId);
+                card.classList.remove('selected');
+            } else {
+                // Select
+                selectedVendors.push(vendor);
+                card.classList.add('selected');
+            }
+            
+            updateSelectedVendors();
+            updateContinueButton();
+        }
+
+        function updateSelectedVendors() {
+            const container = document.getElementById('selected-vendors');
+            if (selectedVendors.length === 0) {
+                container.innerHTML = '<p>No vendors selected yet</p>';
+            } else {
+                container.innerHTML = `
+                    <h4>Selected Vendors (${selectedVendors.length}):</h4>
+                    ${selectedVendors.map(vendor => `
+                        <div class="vendor-card selected">
+                            <h5>${vendor.name}</h5>
+                            <p>Product: ${vendor.productName}</p>
+                            <p>Price: $${vendor.price.toLocaleString()}</p>
+                            <p>Contact: ${vendor.contact}</p>
+                        </div>
+                    `).join('')}
+                `;
+            }
+        }
+
+        function updateContinueButton() {
+            const btn = document.getElementById('continue-btn');
+            btn.disabled = selectedVendors.length === 0;
+            btn.textContent = selectedVendors.length > 0 
+                ? `Continue to RFQ (${selectedVendors.length} selected)`
+                : 'Select vendors to continue';
+        }
+
+        function proceedToRFQ() {
+            if (selectedVendors.length === 0) {
+                alert('Please select at least one vendor');
+                return;
+            }
+
+            console.log('Proceeding to RFQ with selected vendors:', selectedVendors);
+            
+            // Show RFQ section
+            document.getElementById('rfq-section').style.display = 'block';
+            
+            // Display selected vendors in RFQ section
+            const rfqContainer = document.getElementById('rfq-vendors');
+            rfqContainer.innerHTML = `
+                <h4>RFQ + Procurement Doc Approval</h4>
+                <p>Selected ${selectedVendors.length} vendors for RFQ generation:</p>
+                ${selectedVendors.map(vendor => `
+                    <div class="vendor-card">
+                        <h5>${vendor.name}</h5>
+                        <p>Product: ${vendor.productName}</p>
+                        <p>Price: $${vendor.price.toLocaleString()}</p>
+                        <p>Contact: ${vendor.contact}</p>
+                        <p>Status: <span id="status-${vendor.id}">Pending</span></p>
+                    </div>
+                `).join('')}
+            `;
+
+            // Scroll to RFQ section
+            document.getElementById('rfq-section').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function generateRFQ() {
+            const btn = document.getElementById('generate-rfq-btn');
+            const status = document.getElementById('rfq-status');
+            
+            btn.disabled = true;
+            btn.textContent = 'Generating RFQ Documents...';
+            status.innerHTML = '<p>🔄 Generating RFQ documents for all selected vendors...</p>';
+
+            // Simulate RFQ generation
+            setTimeout(() => {
+                selectedVendors.forEach(vendor => {
+                    const statusEl = document.getElementById(`status-${vendor.id}`);
+                    if (statusEl) {
+                        statusEl.textContent = 'RFQ Sent';
+                        statusEl.style.color = 'blue';
+                    }
+                });
+
+                status.innerHTML = `
+                    <div class="success">
+                        <h4>✅ RFQ Documents Generated Successfully!</h4>
+                        <p>RFQ documents have been sent to all ${selectedVendors.length} selected vendors.</p>
+                        <p>You can now track responses and manage approvals.</p>
+                    </div>
+                `;
+
+                btn.textContent = 'RFQ Documents Generated';
+                btn.style.backgroundColor = '#28a745';
+                btn.style.color = 'white';
+            }, 2000);
+        }
+
+        // Initialize
+        updateSelectedVendors();
+        updateContinueButton();
+    </script>
+</body>
+</html>
