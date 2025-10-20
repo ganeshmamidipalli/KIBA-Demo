@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Search, Loader2, Copy } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Loader2, Copy, CheckCircle2, DollarSign, Package, Clock, Star, ExternalLink } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Textarea } from "../ui/textarea";
 import { Progress } from "../ui/progress";
 import { Label } from "../ui/label";
+import { Badge } from "../ui/badge";
 import {
   Select,
   SelectContent,
@@ -15,6 +16,20 @@ import {
 } from "../ui/select";
 import { API_BASE } from "../../lib/api";
 import type { SpecVariant } from "../../types";
+
+interface Vendor {
+  id: string;
+  name: string;
+  description: string;
+  price?: string;
+  priceRange?: string;
+  rating?: number;
+  deliveryTime?: string;
+  website?: string;
+  contact?: string;
+  features?: string[];
+  isSelected?: boolean;
+}
 
 interface StepVendorSearchProps {
   productName: string;
@@ -41,6 +56,82 @@ export function StepVendorSearch({
   onNext,
   onBack,
 }: StepVendorSearchProps) {
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [selectedVendors, setSelectedVendors] = useState<Vendor[]>([]);
+  const [parsingVendors, setParsingVendors] = useState(false);
+
+  // Parse vendors from search output text
+  useEffect(() => {
+    if (searchOutputText && !searching) {
+      setParsingVendors(true);
+      const parsedVendors = parseVendorsFromText(searchOutputText);
+      setVendors(parsedVendors);
+      setParsingVendors(false);
+    }
+  }, [searchOutputText, searching]);
+
+  // Parse vendors from search text
+  const parseVendorsFromText = (text: string): Vendor[] => {
+    const vendors: Vendor[] = [];
+    const lines = text.split('\n');
+    let currentVendor: Partial<Vendor> = {};
+    let vendorId = 1;
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines
+      if (!trimmedLine) continue;
+      
+      // Check for vendor name patterns
+      if (trimmedLine.match(/^[A-Z][a-zA-Z\s&]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group)$/)) {
+        if (currentVendor.name) {
+          vendors.push({ ...currentVendor, id: `vendor-${vendorId++}` } as Vendor);
+        }
+        currentVendor = { name: trimmedLine };
+      }
+      // Check for price patterns
+      else if (trimmedLine.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?/)) {
+        currentVendor.price = trimmedLine;
+      }
+      // Check for website patterns
+      else if (trimmedLine.match(/https?:\/\/[^\s]+/)) {
+        currentVendor.website = trimmedLine;
+      }
+      // Check for rating patterns
+      else if (trimmedLine.match(/\d+(?:\.\d+)?\s*\/\s*5|★\s*\d+(?:\.\d+)?/)) {
+        const ratingMatch = trimmedLine.match(/(\d+(?:\.\d+)?)/);
+        if (ratingMatch) {
+          currentVendor.rating = parseFloat(ratingMatch[1]);
+        }
+      }
+      // Check for delivery time patterns
+      else if (trimmedLine.match(/\d+\s*(?:days?|weeks?|months?)/i)) {
+        currentVendor.deliveryTime = trimmedLine;
+      }
+      // Everything else is description
+      else if (trimmedLine.length > 10) {
+        currentVendor.description = (currentVendor.description || '') + ' ' + trimmedLine;
+      }
+    }
+
+    // Add the last vendor
+    if (currentVendor.name) {
+      vendors.push({ ...currentVendor, id: `vendor-${vendorId++}` } as Vendor);
+    }
+
+    return vendors;
+  };
+
+  // Handle vendor selection
+  const handleVendorSelect = (vendor: Vendor) => {
+    const isSelected = selectedVendors.some(v => v.id === vendor.id);
+    if (isSelected) {
+      setSelectedVendors(selectedVendors.filter(v => v.id !== vendor.id));
+    } else {
+      setSelectedVendors([...selectedVendors, vendor]);
+    }
+  };
   const [buildingQuery, setBuildingQuery] = useState(false);
   const [searchProgress, setSearchProgress] = useState(0);
   const [searchStatus, setSearchStatus] = useState("");
@@ -283,7 +374,9 @@ export function StepVendorSearch({
                       <Search className="h-4 w-4 text-primary" />
                       Vendor Search Results
                     </CardTitle>
-                    <CardDescription>Powered by AI web browsing</CardDescription>
+                    <CardDescription>
+                      {parsingVendors ? "Parsing vendor information..." : `Found ${vendors.length} vendors`}
+                    </CardDescription>
                   </div>
                   <Button
                     variant="outline"
@@ -295,22 +388,119 @@ export function StepVendorSearch({
                     className="gap-2"
                   >
                     <Copy className="h-3 w-3" />
-                    Copy
+                    Copy Raw
                   </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                <div
-                  className="prose prose-sm dark:prose-invert max-w-none"
-                  dangerouslySetInnerHTML={{
-                    __html: searchOutputText
-                      .replace(/\n\n/g, '</p><p>')
-                      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-primary font-semibold">$1</strong>')
-                      .replace(/\n/g, '<br/>')
-                      .replace(/^(.+)$/s, '<p>$1</p>')
-                      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary underline">$1</a>')
-                  }}
-                />
+                {parsingVendors ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                    <span>Parsing vendor information...</span>
+                  </div>
+                ) : vendors.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {vendors.map((vendor) => {
+                        const isSelected = selectedVendors.some(v => v.id === vendor.id);
+                        return (
+                          <Card
+                            key={vendor.id}
+                            className={`cursor-pointer transition-all hover:shadow-md ${
+                              isSelected 
+                                ? "ring-2 ring-primary bg-primary/5" 
+                                : "hover:ring-2 hover:ring-primary/30"
+                            }`}
+                            onClick={() => handleVendorSelect(vendor)}
+                          >
+                            <CardContent className="p-4">
+                              <div className="flex items-start justify-between mb-3">
+                                <div className="flex-1">
+                                  <h3 className="font-semibold text-lg mb-1">{vendor.name}</h3>
+                                  {vendor.rating && (
+                                    <div className="flex items-center gap-1 mb-2">
+                                      <Star className="h-4 w-4 text-yellow-500 fill-current" />
+                                      <span className="text-sm text-muted-foreground">{vendor.rating}/5</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {isSelected && (
+                                    <CheckCircle2 className="h-5 w-5 text-primary" />
+                                  )}
+                                </div>
+                              </div>
+                              
+                              {vendor.description && (
+                                <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                                  {vendor.description}
+                                </p>
+                              )}
+                              
+                              <div className="space-y-2">
+                                {vendor.price && (
+                                  <div className="flex items-center gap-2">
+                                    <DollarSign className="h-4 w-4 text-green-600" />
+                                    <span className="font-semibold text-green-600">{vendor.price}</span>
+                                  </div>
+                                )}
+                                
+                                {vendor.deliveryTime && (
+                                  <div className="flex items-center gap-2">
+                                    <Clock className="h-4 w-4 text-blue-600" />
+                                    <span className="text-sm text-muted-foreground">{vendor.deliveryTime}</span>
+                                  </div>
+                                )}
+                                
+                                {vendor.website && (
+                                  <div className="flex items-center gap-2">
+                                    <ExternalLink className="h-4 w-4 text-primary" />
+                                    <a 
+                                      href={vendor.website} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-sm text-primary hover:underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      Visit Website
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                    
+                    {selectedVendors.length > 0 && (
+                      <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
+                        <h4 className="font-semibold mb-2">Selected Vendors ({selectedVendors.length})</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedVendors.map((vendor) => (
+                            <Badge key={vendor.id} variant="secondary" className="gap-1">
+                              {vendor.name}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleVendorSelect(vendor);
+                                }}
+                                className="ml-1 hover:text-destructive"
+                              >
+                                ×
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Package className="h-8 w-8 mx-auto mb-2" />
+                    <p>No vendors found in search results</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -323,10 +513,13 @@ export function StepVendorSearch({
             </Button>
             <Button
               onClick={onNext}
-              disabled={!searchOutputText}
+              disabled={!searchOutputText || selectedVendors.length === 0}
               className="gap-2"
             >
-              Continue to RFQ
+              {selectedVendors.length > 0 
+                ? `Continue to RFQ (${selectedVendors.length} selected)`
+                : "Select vendors to continue"
+              }
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

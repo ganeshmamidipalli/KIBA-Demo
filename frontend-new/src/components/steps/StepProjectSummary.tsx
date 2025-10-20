@@ -93,6 +93,9 @@ export function StepProjectSummary({
       
       console.log("StepProjectSummary: Final recommendations generated:", response);
       
+      // Add a small delay to show the generating state
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       // Proceed to next step (specifications with recommendations)
       onConfirm();
     } catch (error) {

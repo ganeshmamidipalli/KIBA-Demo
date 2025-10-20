@@ -1,8 +1,9 @@
 import { motion } from "framer-motion";
-import { ChevronLeft, FileText, Loader2, CheckCircle2, ExternalLink } from "lucide-react";
+import { ChevronLeft, FileText, Loader2, CheckCircle2, ExternalLink, AlertTriangle, DollarSign, Package } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Separator } from "../ui/separator";
+import { Badge } from "../ui/badge";
 import { API_BASE } from "../../lib/api";
 import type { SpecVariant, Attachment, RFQResult } from "../../types";
 
@@ -51,6 +52,38 @@ export function StepRFQ({
   setGeneratingRFQ,
   onBack,
 }: StepRFQProps) {
+  
+  // Pricing validation logic
+  const validatePricing = () => {
+    const issues: string[] = [];
+    
+    // Check if selected variants have pricing
+    selectedVariants.forEach((variant, index) => {
+      if (!variant.est_unit_price_usd || variant.est_unit_price_usd === 0) {
+        issues.push(`Variant ${index + 1} (${variant.title}) is missing pricing information`);
+      }
+    });
+    
+    // Check if budget is reasonable compared to variant pricing
+    const totalVariantCost = selectedVariants.reduce((sum, variant) => 
+      sum + (variant.est_total_usd || 0), 0
+    );
+    const budgetAmount = parseFloat(budget) || 0;
+    
+    if (budgetAmount > 0 && totalVariantCost > 0) {
+      const variance = Math.abs(totalVariantCost - budgetAmount) / budgetAmount;
+      if (variance > 0.5) { // 50% variance
+        issues.push(`Selected variants total cost ($${totalVariantCost.toLocaleString()}) differs significantly from budget ($${budgetAmount.toLocaleString()})`);
+      }
+    }
+    
+    return {
+      isValid: issues.length === 0,
+      issues
+    };
+  };
+  
+  const pricingValidation = validatePricing();
   
   const generateRFQ = async () => {
     setGeneratingRFQ(true);
@@ -130,6 +163,82 @@ export function StepRFQ({
               <p className="text-sm text-muted-foreground">
                 Review the collected information and generate your professional RFQ document
               </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Pricing Validation */}
+      {!pricingValidation.isValid && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-5 w-5" />
+              Pricing Validation Issues
+            </CardTitle>
+            <CardDescription className="text-amber-700 dark:text-amber-300">
+              Please address these issues before generating the RFQ
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {pricingValidation.issues.map((issue, index) => (
+                <div key={index} className="flex items-start gap-2 text-sm">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-amber-800 dark:text-amber-200">{issue}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pricing Summary */}
+      <Card className="border-green-500/30 bg-green-500/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base text-green-800 dark:text-green-200">
+            <DollarSign className="h-5 w-5" />
+            Pricing Summary
+          </CardTitle>
+          <CardDescription className="text-green-700 dark:text-green-300">
+            Review pricing information before generating RFQ
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {selectedVariants.map((variant, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-lg border">
+                <div className="flex items-center gap-3">
+                  <Package className="h-5 w-5 text-primary" />
+                  <div>
+                    <h4 className="font-medium">{variant.title}</h4>
+                    <p className="text-sm text-muted-foreground">Quantity: {variant.quantity}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-semibold text-green-600">
+                    ${variant.est_unit_price_usd?.toLocaleString() || 'N/A'} per unit
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Total: ${variant.est_total_usd?.toLocaleString() || 'N/A'}
+                  </p>
+                </div>
+              </div>
+            ))}
+            
+            <div className="border-t pt-4">
+              <div className="flex justify-between items-center text-lg font-semibold">
+                <span>Total Project Cost:</span>
+                <span className="text-green-600">
+                  ${selectedVariants.reduce((sum, variant) => sum + (variant.est_total_usd || 0), 0).toLocaleString()}
+                </span>
+              </div>
+              {budget && (
+                <div className="flex justify-between items-center text-sm text-muted-foreground mt-1">
+                  <span>Budget:</span>
+                  <span>${parseFloat(budget).toLocaleString()}</span>
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -228,7 +337,7 @@ export function StepRFQ({
             </div>
             <Button
               onClick={generateRFQ}
-              disabled={generatingRFQ || !selectedVariants.length}
+              disabled={generatingRFQ || !selectedVariants.length || !pricingValidation.isValid}
               size="lg"
               className="gap-2"
             >
