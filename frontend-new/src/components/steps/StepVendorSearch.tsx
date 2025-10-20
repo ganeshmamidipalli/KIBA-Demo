@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Search, Loader2, CheckCircle2, DollarSign, Clock, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Loader2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Badge } from "../ui/badge";
-import { buildSearchQuery, findVendors } from "../../lib/api";
+import { findVendors } from "../../lib/api";
 import type { SpecVariant, KPARecommendations } from "../../types";
 
 interface Vendor {
@@ -67,8 +66,14 @@ export function StepVendorSearch({
   onNext,
   onBack,
 }: StepVendorSearchProps) {
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [selectedVendors, setSelectedVendors] = useState<Vendor[]>([]);
+  type VendorBatch = { id: number; query: string; userNotes?: string; results: Vendor[]; createdAt: string; hiddenFiltered?: number };
+  const [batches, setBatches] = useState<VendorBatch[]>([]);
+  const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
+  const [selectedVendorsGlobal, setSelectedVendorsGlobal] = useState<Vendor[]>([]);
+  const [goodLinkSet, setGoodLinkSet] = useState<Set<string>>(new Set());
+  const [queryInput, setQueryInput] = useState<string>("");
+  const [notesInput, setNotesInput] = useState<string>("");
+  const [autoRan, setAutoRan] = useState<boolean>(false);
 
   // Generate enhanced search query based on selected recommendation
   const generateEnhancedSearchQuery = () => {
@@ -111,237 +116,124 @@ export function StepVendorSearch({
     return enhancedQuery;
   };
 
-  // Update enhanced search query when selected variants or KPA recommendations change
+  // Seed query input from recommendations when available (no auto-run)
   useEffect(() => {
     const enhanced = generateEnhancedSearchQuery();
-    if (enhanced !== searchQuery) {
+    if (enhanced && enhanced !== searchQuery) {
       setSearchQuery(enhanced);
+      setQueryInput(enhanced);
     }
   }, [selectedVariants, kpaRecommendations, productName]);
 
-  // Parse vendors from search output text
+  // In-memory only; no persistence across refresh/navigation
+
+  // Reset state when the selected variant changes (new recommendation)
   useEffect(() => {
-    if (searchOutputText && !searching) {
-      const parsedVendors = parseVendorsFromText(searchOutputText);
-      setVendors(parsedVendors);
+    const currentId = selectedVariants && selectedVariants.length > 0 ? (selectedVariants[0].id || selectedVariants[0].title) : null;
+    const prevId = (window as any).__kiba_prev_variant_id || null;
+    if (currentId && prevId && currentId !== prevId) {
+      try { sessionStorage.removeItem('vendorSearch.autoRanOnce'); } catch {}
+      setBatches([]);
+      setActiveBatchId(null);
+      setSelectedVendorsGlobal([]);
+      setGoodLinkSet(new Set());
+      setAutoRan(false);
+      setSearchOutputText("");
     }
-  }, [searchOutputText, searching]);
+    (window as any).__kiba_prev_variant_id = currentId;
+  }, [selectedVariants]);
 
-  // Parse vendors from search text with improved logic
-  const parseVendorsFromText = (text: string): Vendor[] => {
-    const vendors: Vendor[] = [];
-    let vendorId = 1;
-
-    console.log("Parsing vendors from text:", text.substring(0, 500) + "...");
-
-    // Enhanced parsing for structured search results
-    // Look for numbered lists or bullet points with vendor information
-    const vendorPatterns = [
-      // Pattern 1: Numbered lists (1. Vendor Name - Price - Description)
-      /(\d+)\.\s*([^•\n\-]+?)(?:\s*[-–]\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?/g,
-      // Pattern 2: Bullet points with vendor info
-      /•\s*([^•\n\-]+?)(?:\s*[-–]\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?(?:\s*•\s*([^•\n]+?))?/g,
-      // Pattern 3: Lines starting with vendor names
-      /^([A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?)\s*[-–]?\s*([^•\n]*)/gm,
-      // Pattern 4: Vendor name followed by price in parentheses
-      /([A-Z][a-zA-Z\s&.,'-]+(?:Inc|Corp|LLC|Ltd|Company|Technologies|Systems|Solutions|Group|Electronics|Computers|Hardware|Supply|Distributors?|Vendors?|Partners?|Associates?|Enterprises?|International|Global|USA|America)?)\s*\(([^)]+)\)/g
-    ];
-
-    // Try each pattern
-    for (const pattern of vendorPatterns) {
-      const matches = [...text.matchAll(pattern)];
-      
-      for (const match of matches) {
-        const vendor: Partial<Vendor> = {};
-        
-        // Extract vendor name based on pattern type
-        let vendorName = '';
-        let description = '';
-        let price = '';
-        
-        if (pattern === vendorPatterns[0]) {
-          // Pattern 1: Numbered lists (1. Vendor Name - Price - Description)
-          vendorName = match[2]?.trim() || '';
-          price = match[3]?.trim() || '';
-          description = match[4]?.trim() || '';
-        } else if (pattern === vendorPatterns[1]) {
-          // Pattern 2: Bullet points
-          vendorName = match[1]?.trim() || '';
-          price = match[2]?.trim() || '';
-          description = match[3]?.trim() || '';
-        } else if (pattern === vendorPatterns[2]) {
-          // Pattern 3: Lines starting with vendor names
-          vendorName = match[1]?.trim() || '';
-          description = match[2]?.trim() || '';
-        } else if (pattern === vendorPatterns[3]) {
-          // Pattern 4: Vendor name with price in parentheses
-          vendorName = match[1]?.trim() || '';
-          price = match[2]?.trim() || '';
-        }
-        
-        // Clean up vendor name
-        vendorName = vendorName.replace(/^[•\-\*\s]+/, '').trim();
-        
-        if (vendorName && vendorName.length > 2 && vendorName.length < 100) {
-          vendor.vendor_name = vendorName;
-          
-          // Set description
-          if (description && description.length > 5) {
-            vendor.description = description;
-          }
-          
-          // Extract and clean price
-          if (price) {
-            const priceMatch = price.match(/\$[\d,]+(?:\.\d{2})?(?:\s*-\s*\$[\d,]+(?:\.\d{2})?)?/);
-            if (priceMatch) {
-              vendor.price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
-            } else if (price.match(/\d+/)) {
-              vendor.price = parseFloat(price.replace(/[$,]/g, ''));
-            }
-          }
-          
-          // Extract additional info from all parts
-          const allParts = match.slice(1).filter(part => part && part.trim());
-          
-          for (const part of allParts) {
-            const cleanPart = part.trim();
-            
-            // Extract website
-            const websiteMatch = cleanPart.match(/https?:\/\/[^\s\)]+/);
-            if (websiteMatch && !vendor.website) {
-              vendor.website = websiteMatch[0];
-            }
-            
-            // Extract availability/delivery info
-            if (cleanPart.match(/(?:in\s+stock|available|delivery|shipping|lead\s+time|days?)/i) && !vendor.deliveryTime) {
-              vendor.deliveryTime = cleanPart;
-            }
-            
-            // Extract rating
-            const ratingMatch = cleanPart.match(/(\d+(?:\.\d+)?)\s*(?:stars?|\/5|\/10)/i);
-            if (ratingMatch && !vendor.rating) {
-              vendor.rating = parseFloat(ratingMatch[1]);
-            }
-            
-            // Extract contact info
-            if (cleanPart.match(/(?:contact|email|phone|call)/i) && !vendor.contact) {
-              vendor.contact = cleanPart;
-            }
-          }
-          
-          // If we have a valid vendor, add it
-          if (vendor.vendor_name && !vendors.some(v => v.vendor_name === vendor.vendor_name)) {
-            vendors.push({
-              ...vendor,
-              id: `vendor-${vendorId++}`,
-              isSelected: false,
-              rating: vendor.rating || Math.floor(Math.random() * 2) + 4 // Random 4-5 star rating if not found
-            } as Vendor);
-          }
-        }
-      }
+  // When raw output changes (after a run), attach to the latest batch results
+  useEffect(() => {
+    if (!searchOutputText) return;
+    if (activeBatchId == null) return;
+    const parsedAll = parseVendorsFromOutput(searchOutputText, selectedVariants[0]?.title || productName);
+    let parsed = parsedAll;
+    // If we have validated links, filter out vendors with bad links
+    if (goodLinkSet && goodLinkSet.size > 0) {
+      parsed = parsed.filter(v => !v.purchase_url || goodLinkSet.has(v.purchase_url));
     }
+    const hidden = Math.max(0, parsedAll.length - parsed.length);
+    setBatches(prev => prev.map(b => b.id === activeBatchId ? { ...b, results: parsed, hiddenFiltered: hidden } : b));
+  }, [searchOutputText]);
 
-    // If no vendors found with patterns, try line-by-line parsing
-    if (vendors.length === 0) {
-      const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        
-        // Look for lines that might be vendor names
-        if (line.match(/^[A-Z][a-zA-Z\s&.,'-]+$/i) && line.length > 3 && line.length < 100) {
-          const vendor: Vendor = {
-            id: `vendor-${vendorId++}`,
-            vendor_name: line,
-            product_name: selectedVariants[0]?.title || 'Unknown Product',
-            model: selectedVariants[0]?.title || 'Unknown Product',
-            sku: `WEB-${vendorId}`,
-            price: 0,
-            currency: 'USD',
-            availability: 'unknown',
-            ships_to: ['USA'],
-            delivery_window_days: 5,
-            purchase_url: '',
-            evidence_urls: [],
-            sales_email: '',
-            sales_phone: undefined,
-            return_policy_url: undefined,
-            notes: 'Found via web search',
-            us_vendor_verification: {
-              is_us_vendor: true,
-              method: 'web_search',
-              business_address: 'United States'
-            },
-            last_checked_utc: new Date().toISOString(),
-            description: "Vendor found in search results",
-            isSelected: false
-          };
-          
-          // Look for price in next few lines
-          for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
-            const nextLine = lines[j];
-            const priceMatch = nextLine.match(/\$[\d,]+(?:\.\d{2})?/);
-            if (priceMatch) {
-              vendor.price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
-              break;
-            }
-          }
-          
-          vendors.push(vendor);
-        }
-      }
-    }
+  // Auto-run the very first search only once after arriving from recommendations.
+  // If the user navigates away and returns, do NOT auto-run again (guarded via sessionStorage flag).
+  useEffect(() => {
+    if (autoRan) return;
+    if (batches.length > 0) return;
+    if (selectedVariants.length === 0) return;
+    // Prevent repeated auto-runs across back/forward navigation within the same tab
+    if (typeof window !== 'undefined' && sessionStorage.getItem('vendorSearch.autoRanOnce') === '1') return;
+    // Prefer seeded queryInput, otherwise fall back to generated searchQuery
+    const candidate = (queryInput || searchQuery || '').trim();
+    if (!candidate) return;
+    setAutoRan(true);
+    try { sessionStorage.setItem('vendorSearch.autoRanOnce', '1'); } catch {}
+    performVendorSearch(false);
+  }, [selectedVariants, batches.length, queryInput, searchQuery]);
 
-    // If still no vendors, create a fallback
-    if (vendors.length === 0) {
-      vendors.push({
-        id: `vendor-${vendorId++}`,
-        vendor_name: "Search Results Summary",
-        product_name: selectedVariants[0]?.title || 'Unknown Product',
-        model: selectedVariants[0]?.title || 'Unknown Product',
-        sku: `SUMMARY-1`,
+  // Removed raw text reveal; only show parsed vendor list
+
+  // Parse vendors from web-search output text into a simple structure
+  const parseVendorsFromOutput = (text: string, modelName: string): Vendor[] => {
+    const results: Vendor[] = [];
+    let id = 1;
+    const sections = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    const urlRegex = /(https?:\/\/[^\s)]+)\b/g;
+
+    for (const sec of sections) {
+      // Try to capture leading bullet vendor name
+      const firstLine = sec.split("\n")[0] || "";
+      const nameMatch = firstLine
+        .replace(/^[-•\d.\s]+/, "")
+        .replace(/\s{2,}.*/, "")
+        .trim();
+
+      const urls = Array.from(sec.matchAll(urlRegex)).map(m => m[1]);
+      if (!nameMatch && urls.length === 0) continue;
+
+      const vendor: Vendor = {
+        id: `vendor-${id++}`,
+        vendor_name: nameMatch || urls[0] || `Vendor ${id}`,
+        product_name: modelName,
+        model: modelName,
         price: 0,
         currency: 'USD',
         availability: 'unknown',
         ships_to: ['USA'],
-        delivery_window_days: 5,
-        purchase_url: '',
-        evidence_urls: [],
+        delivery_window_days: 0,
+        purchase_url: urls[0] || '',
+        evidence_urls: urls,
         sales_email: '',
-        sales_phone: undefined,
-        return_policy_url: undefined,
-        notes: 'Search results summary',
-        us_vendor_verification: {
-          is_us_vendor: true,
-          method: 'summary',
-          business_address: 'United States'
-        },
+        notes: sec.length > 300 ? sec.slice(0, 300) + '…' : sec,
+        us_vendor_verification: { is_us_vendor: true, method: 'web_search', business_address: '' },
         last_checked_utc: new Date().toISOString(),
-        description: text.substring(0, 300) + (text.length > 300 ? "..." : ""),
         isSelected: false
-      });
+      };
+
+      // Filter duplicates by name or URL
+      if (!results.some(v => v.vendor_name === vendor.vendor_name || (v.purchase_url && v.purchase_url === vendor.purchase_url))) {
+        results.push(vendor);
+      }
     }
 
-    return vendors;
+    // If nothing parsed, return empty
+    return results;
   };
 
-  // Handle vendor selection
+  // Handle vendor selection toggle
   const handleVendorSelect = (vendor: Vendor) => {
-    const isSelected = selectedVendors.some(v => v.vendor_name === vendor.vendor_name);
+    const isSelected = selectedVendorsGlobal.some(v => v.id === vendor.id);
     if (isSelected) {
-      const newSelected = selectedVendors.filter(v => v.vendor_name !== vendor.vendor_name);
-      console.log("StepVendorSearch: Removing vendor, new selected:", newSelected);
-      setSelectedVendors(newSelected);
+      setSelectedVendorsGlobal(prev => prev.filter(v => v.id !== vendor.id));
     } else {
-      const newSelected = [...selectedVendors, vendor];
-      console.log("StepVendorSearch: Adding vendor, new selected:", newSelected);
-      setSelectedVendors(newSelected);
+      setSelectedVendorsGlobal(prev => [...prev, vendor]);
     }
   };
   const [searchStatus, setSearchStatus] = useState("");
   const [maxResults] = useState(10);
-  const [autoSearching, setAutoSearching] = useState(false);
+  // Removed legacy autoSearching; rely on `searching` only
   const [searchQueryDisplay, setSearchQueryDisplay] = useState("");
   const [isTypingQuery, setIsTypingQuery] = useState(false);
   const [searchSteps, setSearchSteps] = useState<string[]>([]);
@@ -393,88 +285,57 @@ export function StepVendorSearch({
     }, 2000); // 2 seconds per step
   };
 
-  const buildSearchQueryLocal = async () => {
-    if (selectedVariants.length === 0) return;
-    
-    try {
-      const selectedVariant = selectedVariants[0];
-      
-      const payload = {
-        product_name: productName,
-        selected_variant: {
-          id: selectedVariant.id,
-          title: selectedVariant.title,
-          summary: selectedVariant.summary,
-          est_unit_price_usd: selectedVariant.est_unit_price_usd,
-          quantity: selectedVariant.quantity
-        },
-        delivery_location: {
-          city: "Wichita",
-          state: "KS"
-        },
-        delivery_window_days: 30,
-        results_limit: maxResults
-      };
-      
-      const data = await buildSearchQuery(payload);
-      const query = data.solid_query || '';
-      setSearchQuery(query);
-      
-      if (!query) {
-        const fallbackQuery = `${productName} ${selectedVariant.title}`;
-        setSearchQuery(fallbackQuery);
-      }
-    } catch (error) {
-      console.error('Error building search query:', error);
-      const fallbackQuery = `${productName} ${selectedVariants[0].title}`;
-      setSearchQuery(fallbackQuery);
-    }
-  };
+  // Removed unused buildSearchQueryLocal helper
 
-  const performVendorSearch = async () => {
+  const performVendorSearch = async (withNotes: boolean = false) => {
     if (selectedVariants.length === 0) return;
-    
+    const baseQuery = (queryInput || searchQuery || '').trim();
+    if (!baseQuery) return;
+
+    const selectedVariant = selectedVariants[0];
+    const combinedQuery = withNotes && notesInput.trim()
+      ? `${baseQuery}. Consider: ${notesInput.trim()}`
+      : baseQuery;
+
     setSearching(true);
-    setVendors([]);
     setSearchStatus("Finding vendors...");
-    
+
+    // Create a new batch entry first and set active
+    const newBatchId = (batches[batches.length - 1]?.id || 0) + 1;
+    const newBatch: VendorBatch = { id: newBatchId, query: combinedQuery, userNotes: withNotes ? notesInput.trim() : undefined, results: [], createdAt: new Date().toISOString() };
+    setBatches(prev => [...prev, newBatch]);
+    setActiveBatchId(newBatchId);
+
     try {
-      // Generate the search query with typing animation
-      const selectedVariant = selectedVariants[0];
-      const query = `i want the best ${selectedVariant.title} with links with ${maxResults} vendors under $${selectedVariant.est_unit_price_usd}`;
-      
-      // Step 1: Type out the query first
-      typeText(query, () => {
-        // Step 2: After query typing is complete, show search steps
+      // Animate query typing + steps for UX
+      typeText(combinedQuery, () => {
         setTimeout(() => {
           startSearchSteps();
-          
-          // Step 3: After steps animation, start the actual search
           setTimeout(async () => {
             try {
-              // Find vendors using the new vendor finder with the exact generated query
               const vendorData = await findVendors(
                 selectedVariant,
                 kpaRecommendations,
-                0, // page
-                maxResults, // page size
-                false, // refresh
-                query // generated search query to send as-is
+                0,
+                maxResults,
+                false,
+                combinedQuery
               );
-              
               setSearchStatus("Vendor search complete!");
-              
-              // Update vendors with the structured data
-              console.log("Vendor search results:", vendorData);
-              console.log("Vendor results array:", vendorData.results);
-              console.log("Number of vendors:", vendorData.results?.length || 0);
-              
-              setVendors(vendorData.results || []);
-              
-              // Set search output text to enable the continue button
-              const searchText = vendorData.output_text || `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
-              setSearchOutputText(searchText);
-              
+              const output = vendorData.output_text || `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
+              setSearchOutputText(output);
+              // Capture validated links if provided by backend
+              try {
+                const links = (vendorData.validated_links || []) as Array<{url: string, status: number|null}>;
+                const ok = new Set<string>();
+                for (const l of links) {
+                  if (l && typeof l.url === 'string' && l.url && typeof l.status === 'number' && l.status >= 200 && l.status < 400) {
+                    ok.add(l.url);
+                  }
+                }
+                if (ok.size > 0) setGoodLinkSet(ok);
+              } catch {}
+              // results parsing handled by useEffect on searchOutputText
             } catch (error: any) {
               console.error('Error finding vendors:', error);
               setSearchStatus(`❌ Vendor Search Error: ${error.message}`);
@@ -482,10 +343,9 @@ export function StepVendorSearch({
               setSearching(false);
               setSearchStatus("");
             }
-          }, 12000); // Wait for all 6 steps to complete (6 steps × 2 seconds each)
-        }, 2000); // Wait 2 seconds after query typing is complete
+          }, 12000);
+        }, 2000);
       });
-      
     } catch (error: any) {
       console.error('Error finding vendors:', error);
       setSearchStatus(`❌ Vendor Search Error: ${error.message}`);
@@ -494,31 +354,21 @@ export function StepVendorSearch({
     }
   };
 
-  useEffect(() => {
-    if (selectedVariants.length === 1) {
-      setAutoSearching(true);
-      buildSearchQueryLocal();
-      // Automatically trigger vendor search when a variant is selected
-      setTimeout(() => {
-        performVendorSearch();
-        setAutoSearching(false);
-      }, 1000); // Small delay to ensure query is built first
-    }
-  }, [selectedVariants]);
+  // No auto search. Seed query only.
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
-      className="space-y-6"
+      className="mx-auto max-w-4xl space-y-4 px-4"
     >
       {/* Header */}
       <div className="text-center">
         <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
           Vendor Search
         </h2>
-        <p className="text-gray-600 text-lg">Search for vendors and select the ones you want to include in your RFQ</p>
+        <p className="text-muted-foreground text-sm">Search US vendors, compare batches, and add picks to RFQ</p>
       </div>
 
       {selectedVariants.length === 0 ? (
@@ -539,10 +389,10 @@ export function StepVendorSearch({
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                {autoSearching ? (
+                {searching ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                    Auto-searching for vendors...
+                    Searching vendors...
                   </>
                 ) : (
                   "Searching for:"
@@ -622,14 +472,14 @@ export function StepVendorSearch({
           )}
 
           {/* Auto Search Status */}
-          {(autoSearching || searching) && !searchQueryDisplay && (
+          {searching && !searchQueryDisplay && (
             <Card className="border-blue-500/30 bg-blue-500/5">
               <CardContent className="pt-6 pb-6 text-center">
                 <div className="flex items-center justify-center gap-3">
                   <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
                   <div>
                     <h3 className="text-lg font-semibold">
-                      {autoSearching ? "Auto-searching for vendors..." : "Searching for vendors..."}
+                      Searching for vendors...
                     </h3>
                     <p className="text-sm text-muted-foreground mt-1">
                       Finding the best vendors for {selectedVariants[0].title}
@@ -643,158 +493,169 @@ export function StepVendorSearch({
             </Card>
           )}
 
-          {/* Manual Search Button */}
-          {!searching && !autoSearching && (
-            <Card className="border-gray-200">
-              <CardContent className="pt-6 pb-6 text-center">
-                <Button 
-                  onClick={performVendorSearch}
-                  className="gap-2"
-                  size="lg"
-                >
-                  <Search className="h-5 w-5" />
-                  Search for Vendors
-                </Button>
-                <p className="text-sm text-muted-foreground mt-2">
-                  Click to start the vendor search process
-                </p>
-            </CardContent>
-          </Card>
-          )}
-
-          {/* Web Search Results */}
-          {searchOutputText && (
-            <Card className="border-primary/20">
+          {/* Search Controls - simplified */}
+          {batches.length === 0 ? (
+            <Card className="border-border bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Search className="h-4 w-4 text-primary" />
-                  Web Search Results
+                  <Search className="h-4 w-4" /> Search Vendors
                 </CardTitle>
-                <CardDescription>
-                  Raw web search output from o4-mini
-                </CardDescription>
+                <CardDescription>Enter a query to start your first search</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <input
+                  className="w-full border rounded px-3 py-2 text-sm bg-background text-foreground"
+                  placeholder="Search query"
+                  value={queryInput}
+                  onChange={e => setQueryInput(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button onClick={() => performVendorSearch(false)} disabled={searching || !queryInput.trim()} className="gap-2">
+                    <Search className="h-4 w-4" /> Run Search
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-border bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Search className="h-4 w-4" /> Refine Search
+                </CardTitle>
+                <CardDescription>Not satisfied? Add your thoughts and search again (new batch)</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <input
+                  className="w-full border rounded px-3 py-2 text-sm bg-background text-foreground"
+                  placeholder="Add your thoughts for the next search"
+                  value={notesInput}
+                  onChange={e => setNotesInput(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button onClick={() => { performVendorSearch(true); setNotesInput(""); }} disabled={searching || !queryInput.trim()} className="gap-2" variant="outline">
+                    <Search className="h-4 w-4" /> Search Again with Thoughts
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500">We’ll combine your thoughts with your last query and show a typing animation while searching.</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Batches Sidebar + Active Batch Results */}
+          {batches.length > 0 && (
+            <Card className="border-primary/20 bg-background/60">
+              <CardHeader>
+                <CardTitle className="text-base">Vendors Found (Batches)</CardTitle>
+                <CardDescription>Click to select vendors to add to CART. Switch batches to compare.</CardDescription>
+                {(() => {
+                  const active = batches.find(b => b.id === activeBatchId);
+                  return active && active.hiddenFiltered && active.hiddenFiltered > 0 ? (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Filtered {active.hiddenFiltered} vendor{active.hiddenFiltered>1?'s':''} with invalid links
+                    </div>
+                  ) : null;
+                })()}
               </CardHeader>
               <CardContent>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <pre className="whitespace-pre-wrap text-sm text-gray-700">
-                    {searchOutputText}
-                  </pre>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="md:col-span-1 border rounded p-2 space-y-2 bg-muted/40">
+                    {batches.map(b => {
+                      const selectedCount = selectedVendorsGlobal.filter(v =>
+                        (b.results || []).some(r => r.id === v.id)
+                      ).length;
+                      return (
+                      <button
+                        key={b.id}
+                        onClick={() => setActiveBatchId(b.id)}
+                        className={`w-full text-left px-3 py-2 rounded border transition-colors ${activeBatchId===b.id? 'bg-primary/10 border-primary':'bg-background border-border hover:bg-muted/50'}`}
+                      >
+                        <div className="text-sm font-medium">Batch {b.id}</div>
+                        <div className="text-xs text-gray-600 truncate">{b.query}</div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>{new Date(b.createdAt).toLocaleTimeString()}</span>
+                          {selectedCount > 0 && (
+                            <span className="ml-2 inline-block px-2 py-0.5 rounded bg-green-100 text-green-700">{selectedCount} selected</span>
+                          )}
+                        </div>
+                      </button>
+                      );
+                    })}
+                  </div>
+                  <div className="md:col-span-3 space-y-3">
+                    {/* Per-batch actions */}
+                    {activeBatchId && (
+                      <div className="flex justify-end">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const activeResults = batches.find(b=>b.id===activeBatchId)?.results || [];
+                            const activeIds = new Set(activeResults.map(r=>r.id));
+                            setSelectedVendorsGlobal(prev => prev.filter(v => !activeIds.has(v.id)));
+                          }}
+                        >
+                          Clear Selections for This Batch
+                        </Button>
+                      </div>
+                    )}
+                    {(batches.find(b=>b.id===activeBatchId)?.results || []).map((v, idx) => {
+                      const selected = selectedVendorsGlobal.some(s => s.id === v.id);
+                    return (
+                      <div key={v.id} className="flex items-start gap-3">
+                        <div className="shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs">{idx+1}</div>
+                        <div className={`flex-1 pr-4 p-3 rounded-2xl border ${selected ? 'border-green-500 bg-green-50 dark:bg-green-950/30' : 'border-border bg-background'}`}>
+                          <div className="font-semibold">{idx + 1}. {v.vendor_name}</div>
+                          {v.purchase_url && (
+                            <a href={v.purchase_url} target="_blank" rel="noreferrer" className="text-blue-600 underline text-sm break-all">
+                              {v.purchase_url}
+                            </a>
+                          )}
+                          {v.notes && (
+                            <div className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{v.notes}</div>
+                          )}
+                        </div>
+                        <div className="self-center">
+                          <Button variant={selected ? 'secondary' : 'outline'} onClick={() => handleVendorSelect(v)}>
+                            {selected ? 'Remove' : 'Select'}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
                 </div>
               </CardContent>
             </Card>
           )}
 
-          {/* Vendor Results */}
-          {vendors.length > 0 && (
-            <Card className="border-primary/20">
+          {/* Selected CART preview */}
+          {selectedVendorsGlobal.length > 0 && (
+            <Card className="border-green-500/30 bg-green-500/5">
               <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Search className="h-4 w-4 text-primary" />
-                  Found {vendors.length} Vendors
-                    </CardTitle>
-                <CardDescription>
-                  Select the vendors you want to include in your RFQ
-                </CardDescription>
+                <CardTitle className="text-base">CART Preview ({selectedVendorsGlobal.length})</CardTitle>
+                <CardDescription>Vendors selected will move to CART in next step</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {vendors.map((vendor) => {
-                    const isSelected = selectedVendors.some(v => v.vendor_name === vendor.vendor_name);
-                    return (
-                      <Card
-                        key={vendor.vendor_name}
-                        className={`cursor-pointer transition-all hover:shadow-lg ${
-                          isSelected 
-                            ? "ring-2 ring-primary bg-primary/5 border-primary/20" 
-                            : "hover:ring-2 hover:ring-primary/30 hover:border-primary/20"
-                        }`}
-                        onClick={() => handleVendorSelect(vendor)}
-                      >
-                        <CardContent className="p-5">
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <h3 className="font-semibold text-lg">{vendor.vendor_name}</h3>
-                                {isSelected && (
-                                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                            {vendor.product_name} - {vendor.model}
-                          </p>
-                          
-                          <div className="space-y-2">
-                            {vendor.price > 0 ? (
-                              <div className="flex items-center gap-2">
-                                <DollarSign className="h-4 w-4 text-green-600" />
-                                <span className="font-semibold text-green-600">${vendor.price.toFixed(2)} {vendor.currency}</span>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm text-muted-foreground">Price not available</span>
-                              </div>
-                            )}
-                            
-                            <div className="flex items-center gap-2">
-                              <Clock className="h-4 w-4 text-blue-600" />
-                              <span className="text-sm text-muted-foreground">{vendor.delivery_window_days} days delivery</span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <ExternalLink className="h-4 w-4 text-primary" />
-                              <a 
-                                href={vendor.purchase_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-sm text-primary hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                Visit Product Page
-                              </a>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-muted-foreground">Sales: {vendor.sales_email}</span>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
+                <div className="flex justify-end mb-2">
+                  <Button variant="outline" onClick={() => setSelectedVendorsGlobal([])}>Clear All Selections</Button>
                 </div>
-                
-                {selectedVendors.length > 0 && (
-                  <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
-                    <h4 className="font-semibold mb-2">Selected Vendors ({selectedVendors.length})</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedVendors.map((vendor) => (
-                        <Badge key={vendor.vendor_name} variant="secondary" className="gap-1">
-                          {vendor.vendor_name}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleVendorSelect(vendor);
-                            }}
-                            className="ml-1 hover:text-destructive"
-                          >
-                            ×
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <ul className="list-decimal ml-6 space-y-1 text-sm">
+                  {selectedVendorsGlobal.map(v => (
+                    <li key={v.id} className="truncate">
+                      {v.vendor_name} {v.purchase_url && (<span className="text-gray-500">- {v.purchase_url}</span>)}
+                    </li>
+                  ))}
+                </ul>
               </CardContent>
             </Card>
           )}
+
+          {/* Raw output removed per request */}
+
+          {/* Vendor tiles removed per request */}
 
 
           {/* Navigation */}
-          <div className="flex justify-between">
+          <div className="flex justify-between sticky bottom-2 bg-background/70 backdrop-blur rounded-xl px-3 py-2 border">
             <Button onClick={onBack} variant="outline" className="gap-2">
               <ChevronLeft className="h-4 w-4" />
               Back
@@ -802,17 +663,16 @@ export function StepVendorSearch({
             <Button
               onClick={() => {
                 console.log("StepVendorSearch: Continue button clicked");
-                console.log("StepVendorSearch: selectedVendors:", selectedVendors);
-                console.log("StepVendorSearch: vendors:", vendors);
-                onNext({ selectedVendors, vendors });
+                onNext({
+                  rawOutput: searchOutputText,
+                  generatedQuery: searchQuery,
+                  selectedVendors: selectedVendorsGlobal,
+                });
               }}
-              disabled={!searchOutputText || selectedVendors.length === 0}
+              disabled={selectedVendorsGlobal.length === 0}
               className="gap-2"
             >
-              {selectedVendors.length > 0 
-                ? `Continue to CART (${selectedVendors.length} selected)`
-                : "Select vendors to continue"
-              }
+              Add to RFQ
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
@@ -821,6 +681,3 @@ export function StepVendorSearch({
     </motion.div>
   );
 }
-
-
-

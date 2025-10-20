@@ -2,12 +2,13 @@ import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, FileText, Send, CheckCircle, Clock, AlertCircle, Download, Mail, Users, Shield, DollarSign, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Badge } from "../ui/badge";
 import { Separator } from "../ui/separator";
 import { Progress } from "../ui/progress";
 import { useState, useEffect } from "react";
 import type { Vendor, RFQResult, CartDecision, ChecklistItem, G1Context, LineItem, ProcurementContext, PR, RFQ } from "../../types";
-import { G1RuleEngine } from "../../lib/g1RuleEngine";
 import { PostCartApiService } from "../../lib/postCartApi";
 
 interface StepRFQProcurementProps {
@@ -52,6 +53,60 @@ export function StepRFQProcurement({
   const [pr, setPR] = useState<PR | null>(null);
   const [rfq, setRFQ] = useState<RFQ | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [confirmedVendors, setConfirmedVendors] = useState(false);
+
+  // Editable vendor fields in CART
+  const [vendorRows, setVendorRows] = useState<Array<{
+    id: string; name: string; productName: string; website?: string; contact?: string;
+    price?: number; currency?: string; leadDays?: number; deliveryTerms?: string; quoteValidity?: string;
+  }>>(
+    selectedVendors.map((v: any) => ({
+      id: v.id,
+      name: v.name || v.vendor_name || 'Vendor',
+      productName: v.productName || v.model || '',
+      website: v.website || v.purchase_url || '',
+      contact: v.contact || '',
+      price: typeof v.price === 'number' ? v.price : undefined,
+      currency: 'USD',
+      leadDays: v.leadDays || 30,
+      deliveryTerms: 'FOB Destination',
+      quoteValidity: '30 days'
+    }))
+  );
+
+  const updateRow = (id: string, patch: Partial<(typeof vendorRows)[number]>) => {
+    setVendorRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  };
+
+  const missingForApprovals = (r: (typeof vendorRows)[number]) => {
+    const m: string[] = [];
+    if (!r.contact) m.push('Email');
+    if (!(r.price && r.price > 0)) m.push('Price');
+    if (!r.currency) m.push('Currency');
+    if (!(r.leadDays && r.leadDays > 0)) m.push('Lead Time');
+    if (!r.deliveryTerms) m.push('Delivery Terms');
+    if (!r.quoteValidity) m.push('Quote Validity');
+    return m;
+  };
+
+  // Procurements & Role Players form state
+  const [procurementKind, setProcurementKind] = useState<'Contract' | 'Subcontract' | 'Purchase Order' | 'Credit Card Auth'>(
+    'Purchase Order'
+  );
+  const [serviceProgramVal, setServiceProgramVal] = useState<string>(serviceProgram || 'Applied Research');
+  const [technicalPOCVal, setTechnicalPOCVal] = useState<string>(technicalPOC || '');
+  const [estimatedCost, setEstimatedCost] = useState<number>(() => {
+    const q = (selectedVendors?.[0] as any)?.price || 0;
+    return q > 0 ? q : 0;
+  });
+  const [projectKeysVal, setProjectKeysVal] = useState<string>(Array.isArray(projectKeys) ? projectKeys.join(', ') : '');
+  const [popStart, setPopStart] = useState<string>('');
+  const [popEnd, setPopEnd] = useState<string>('');
+  const [suggestedType, setSuggestedType] = useState<string>('Purchase Order');
+  const [competitionType, setCompetitionType] = useState<'Competitive' | 'Sole Source'>(selectedVendors.length > 1 ? 'Competitive' : 'Sole Source');
+  const [multipleVendorsAvailable, setMultipleVendorsAvailable] = useState<boolean>(selectedVendors.length > 1);
+  const [scopeBrief, setScopeBrief] = useState<string>('');
+  const [vendorEvaluationNotes, setVendorEvaluationNotes] = useState<string>('');
 
   // Debug: Log selected vendors when component mounts
   console.log("StepRFQProcurement: Received selectedVendors:", selectedVendors);
@@ -62,22 +117,29 @@ export function StepRFQProcurement({
     evaluateG1Decision();
   }, [selectedVendors]);
 
-  // Evaluate G1 decision gate
+  // Evaluate G1 decision gate (server-side)
   const evaluateG1Decision = async () => {
     if (selectedVendors.length === 0) return;
 
     setIsEvaluating(true);
     try {
-      // Create G1 context
+      // Create G1 context (fallback-safe mapping from vendor shape)
       const g1Context: G1Context = {
-        selectedVendors,
+        selectedVendors: selectedVendors.map((v: any) => ({
+          id: v.id,
+          name: v.name || v.vendor_name || "Vendor",
+          productName: v.productName || v.model || "",
+          price: typeof v.price === 'number' ? v.price : 0,
+          contact: v.contact || "",
+          website: v.website || v.purchase_url || ""
+        })),
         items: createLineItemsFromVendors(),
         pricing: createPricingFromVendors(),
         procurementContext: createProcurementContext()
       };
 
-      // Evaluate using G1 rule engine
-      const decision = G1RuleEngine.generateCartDecision(g1Context);
+      // Evaluate using backend API
+      const decision = await PostCartApiService.evaluateG1(g1Context);
       setCartDecision(decision);
       
       console.log("G1 Decision:", decision);
@@ -90,33 +152,33 @@ export function StepRFQProcurement({
 
   // Create line items from selected vendors
   const createLineItemsFromVendors = (): LineItem[] => {
-    return selectedVendors.map((vendor, index) => ({
-      sku: `ITEM-${vendor.id}`,
-      desc: vendor.productName || productName,
+    return vendorRows.map((row) => ({
+      sku: `ITEM-${row.id}`,
+      desc: row.productName || productName,
       qty: parseInt(quantity) || 1,
       uom: "EA",
-      unitPrice: vendor.price || 0,
-      currency: "USD",
-      leadDays: 30, // Default lead time
-      deliveryTerms: "FOB Destination",
-      quoteValidity: "30 days"
+      unitPrice: row.price || 0,
+      currency: row.currency || 'USD',
+      leadDays: row.leadDays || 30,
+      deliveryTerms: row.deliveryTerms || 'FOB Destination',
+      quoteValidity: row.quoteValidity || '30 days'
     }));
   };
 
   // Create pricing data from vendors
   const createPricingFromVendors = (): Record<string, LineItem[]> => {
     const pricing: Record<string, LineItem[]> = {};
-    selectedVendors.forEach(vendor => {
-      pricing[vendor.id] = [{
-        sku: `ITEM-${vendor.id}`,
-        desc: vendor.productName || productName,
+    vendorRows.forEach((row) => {
+      pricing[row.id] = [{
+        sku: `ITEM-${row.id}`,
+        desc: row.productName || productName,
         qty: parseInt(quantity) || 1,
         uom: "EA",
-        unitPrice: vendor.price || 0,
-        currency: "USD",
-        leadDays: 30,
-        deliveryTerms: "FOB Destination",
-        quoteValidity: "30 days"
+        unitPrice: row.price || 0,
+        currency: row.currency || 'USD',
+        leadDays: row.leadDays || 30,
+        deliveryTerms: row.deliveryTerms || 'FOB Destination',
+        quoteValidity: row.quoteValidity || '30 days'
       }];
     });
     return pricing;
@@ -128,7 +190,7 @@ export function StepRFQProcurement({
       budgeted: true, // Assume budgeted for now
       spendType: "Direct",
       competitive: selectedVendors.length > 1,
-      estimatedCost: parseFloat(budget) || 0,
+      estimatedCost: estimatedCost || parseFloat(budget) || 0,
       contractRequired: false,
       pmisProjectIds: projectKeys,
       justifications: [],
@@ -171,6 +233,28 @@ export function StepRFQProcurement({
     }
   };
 
+  // Guard for approvals readiness
+  const approvalsReady = !!cartDecision?.g1Result?.passed && !!serviceProgramVal && !!technicalPOCVal && (estimatedCost || 0) > 0 && vendorRows.every(r => missingForApprovals(r).length === 0);
+
+  // RFQ Draft previews
+  const [rfqDrafts, setRfqDrafts] = useState<Record<string, {subject: string; body_md: string}>>({});
+  const loadRfqDrafts = async () => {
+    const drafts: Record<string, {subject: string; body_md: string}> = {};
+    for (const r of vendorRows) {
+      if (!r.contact) continue; // need an email to send
+      try {
+        const d = await PostCartApiService.draftRFQ({
+          vendor: { id: r.id, name: r.name, contact: r.contact },
+          lineItems: createLineItemsFromVendors(),
+          dueDate: new Date(Date.now() + 14*24*60*60*1000).toISOString(),
+          terms: { delivery: r.deliveryTerms || 'FOB Destination', payment: 'Net 30' }
+        });
+        drafts[r.id] = d;
+      } catch (e) { /* ignore individual errors */ }
+    }
+    setRfqDrafts(drafts);
+  };
+
   // Handle Proceed to Approvals (Path A)
   const handleProceedToApprovals = async () => {
     if (!cartDecision) return;
@@ -181,19 +265,19 @@ export function StepRFQProcurement({
         projectKeys: projectKeys,
         spendType: "Direct" as const,
         budgeted: true,
-        estimatedCost: parseFloat(budget) || 0,
+        estimatedCost: estimatedCost || parseFloat(budget) || 0,
         competitive: selectedVendors.length > 1,
         vendor: {
-          id: selectedVendors[0].id,
-          name: selectedVendors[0].name,
-          contact: selectedVendors[0].contact,
-          website: selectedVendors[0].website
+          id: (selectedVendors[0] as any).id,
+          name: (selectedVendors[0] as any).name || (selectedVendors[0] as any).vendor_name || "Vendor",
+          contact: (selectedVendors[0] as any).contact || "",
+          website: (selectedVendors[0] as any).website || (selectedVendors[0] as any).purchase_url || ""
         },
         lineItems: createLineItemsFromVendors(),
         documents: [], // Will be populated with uploaded docs
         justification: {
-          type: "Budgeted" as const,
-          text: "Approved budget allocation"
+          type: competitionType === 'Sole Source' ? 'SSJ' : 'Budgeted',
+          text: competitionType === 'Sole Source' ? 'Sole Source Justification pending/attached' : 'Approved budget allocation'
         }
       };
 
@@ -222,9 +306,9 @@ export function StepRFQProcurement({
       const rfqData = {
         lineItems: createLineItemsFromVendors(),
         vendors: selectedVendors.map(vendor => ({
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          contact: vendor.contact,
+          vendorId: (vendor as any).id,
+          vendorName: (vendor as any).name || (vendor as any).vendor_name || "Vendor",
+          contact: (vendor as any).contact || "",
           status: "PENDING" as const
         })),
         dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(), // 14 days from now
@@ -316,6 +400,7 @@ export function StepRFQProcurement({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
+      className="mx-auto max-w-4xl space-y-4 px-4"
     >
       <Card className="border-border">
         <CardHeader>
@@ -328,6 +413,134 @@ export function StepRFQProcurement({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Selected Vendors (editable) */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Selected Vendors</CardTitle>
+              <CardDescription>Fill missing fields. Required for Approvals: email, price, currency, lead time, terms, validity.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-2">Vendor</th>
+                      <th className="py-2 pr-2">Email</th>
+                      <th className="py-2 pr-2">Website</th>
+                      <th className="py-2 pr-2">Price</th>
+                      <th className="py-2 pr-2">Currency</th>
+                      <th className="py-2 pr-2">Lead Days</th>
+                      <th className="py-2 pr-2">Delivery Terms</th>
+                      <th className="py-2 pr-2">Validity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vendorRows.map((r) => {
+                      const miss = missingForApprovals(r);
+                      const missingSet = new Set(miss);
+                      const cell = (key: string, input: React.ReactNode) => (
+                        <td className={`py-1 pr-2 ${missingSet.has(key) ? 'bg-amber-50' : ''}`}>{input}</td>
+                      );
+                      return (
+                        <tr key={r.id} className="border-t">
+                          <td className="py-1 pr-2 font-medium">{r.name}</td>
+                          {cell('Email', <Input value={r.contact || ''} onChange={e=>updateRow(r.id,{contact:e.target.value})} placeholder="sales@vendor.com" />)}
+                          <td className="py-1 pr-2"><Input value={r.website || ''} onChange={e=>updateRow(r.id,{website:e.target.value})} placeholder="https://..." /></td>
+                          {cell('Price', <Input type="number" value={r.price ?? ''} onChange={e=>updateRow(r.id,{price: parseFloat(e.target.value)||0})} placeholder="0" />)}
+                          {cell('Currency', <Input value={r.currency || 'USD'} onChange={e=>updateRow(r.id,{currency:e.target.value})} />)}
+                          {cell('Lead Time', <Input type="number" value={r.leadDays ?? 0} onChange={e=>updateRow(r.id,{leadDays: parseInt(e.target.value)||0})} />)}
+                          {cell('Delivery Terms', <Input value={r.deliveryTerms || ''} onChange={e=>updateRow(r.id,{deliveryTerms:e.target.value})} />)}
+                          {cell('Quote Validity', <Input value={r.quoteValidity || ''} onChange={e=>updateRow(r.id,{quoteValidity:e.target.value})} />)}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-3">
+                <Button variant="outline" onClick={() => { setConfirmedVendors(true); loadRfqDrafts(); }} disabled={confirmedVendors}>
+                  {confirmedVendors ? 'Vendors Confirmed' : 'Confirm Vendors'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          {/* Procurements & Role Players */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Procurements & Role Players</CardTitle>
+              <CardDescription>Fill details to proceed with Approvals or Generate RFQs</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Procurement Kind</label>
+                  <Input value={procurementKind} onChange={e=>setProcurementKind(e.target.value as any)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Service Program</label>
+                  <Input value={serviceProgramVal} onChange={e=>setServiceProgramVal(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">KMI Technical POC</label>
+                  <Input value={technicalPOCVal} onChange={e=>setTechnicalPOCVal(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Estimated Costs (USD)</label>
+                  <Input type="number" value={String(estimatedCost ?? '')} onChange={e=>setEstimatedCost(parseFloat(e.target.value)||0)} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-muted-foreground">KMI Project(s) Supported (comma separated)</label>
+                  <Input value={projectKeysVal} onChange={e=>setProjectKeysVal(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">POP Start</label>
+                  <Input type="date" value={popStart} onChange={e=>setPopStart(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">POP Completion</label>
+                  <Input type="date" value={popEnd} onChange={e=>setPopEnd(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Suggested Procurement Type</label>
+                  <Input value={suggestedType} onChange={e=>setSuggestedType(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Competition Type</label>
+                  <Input value={competitionType} onChange={e=>setCompetitionType((e.target.value as any) || 'Competitive')} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Multiple Vendors Available?</label>
+                  <Input value={multipleVendorsAvailable ? 'Yes' : 'No'} onChange={e=>setMultipleVendorsAvailable(e.target.value.toLowerCase().startsWith('y'))} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Scope Brief */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Scope Brief</CardTitle>
+              <CardDescription>Describe the purpose and what the supplier will provide</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Textarea value={scopeBrief} onChange={e=>setScopeBrief(e.target.value)} placeholder="Briefly describe the scope..." />
+            </CardContent>
+          </Card>
+
+          {/* Vendor Evaluation */}
+          <Card className="border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Vendor Evaluation</CardTitle>
+              <CardDescription>List vendors evaluated and contacts; upload quotes in next step</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Textarea value={vendorEvaluationNotes} onChange={e=>setVendorEvaluationNotes(e.target.value)} placeholder="We have reached out to ... (names, contacts)" />
+            </CardContent>
+          </Card>
           {/* G1 Decision Gate */}
           {isEvaluating ? (
             <Card className="bg-yellow-50 border-yellow-200">
@@ -339,10 +552,10 @@ export function StepRFQProcurement({
               </CardContent>
             </Card>
           ) : cartDecision ? (
-            <Card className={`border-2 ${cartDecision.g1Result.pass ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
+            <Card className={`border-2 ${cartDecision.g1Result.passed ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'}`}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
-                  {cartDecision.g1Result.pass ? (
+                  {cartDecision.g1Result.passed ? (
                     <CheckCircle2 className="h-5 w-5 text-green-600" />
                   ) : (
                     <AlertTriangle className="h-5 w-5 text-orange-600" />
@@ -443,11 +656,11 @@ export function StepRFQProcurement({
                   {/* Path A: Proceed to Approvals */}
                   <Card 
                     className={`cursor-pointer transition-all ${
-                      cartDecision.g1Result.pass 
+                      cartDecision.g1Result.passed 
                         ? 'border-green-200 hover:border-green-300 bg-green-50' 
                         : 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
                     }`}
-                    onClick={() => cartDecision.g1Result.pass && handlePathSelection('APPROVALS')}
+                    onClick={() => cartDecision.g1Result.passed && handlePathSelection('APPROVALS')}
                   >
                     <CardContent className="pt-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -471,7 +684,7 @@ export function StepRFQProcurement({
                           <span>Business rules satisfied</span>
                         </div>
                       </div>
-                      {!cartDecision.g1Result.pass && (
+                      {!cartDecision.g1Result.passed && (
                         <div className="mt-2 text-xs text-red-600">
                           Requires G1 pass to proceed
                         </div>
@@ -699,3 +912,24 @@ export function StepRFQProcurement({
     </motion.div>
   );
 }
+          {/* RFQ Draft Previews (after confirm) */}
+          {confirmedVendors && Object.keys(rfqDrafts).length > 0 && (
+            <Card className="border-orange-200">
+              <CardHeader>
+                <CardTitle className="text-base">RFQ Drafts</CardTitle>
+                <CardDescription>Review per-vendor email drafts before sending</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {vendorRows.map(r => rfqDrafts[r.id] ? (
+                  <div key={r.id} className="border rounded p-3">
+                    <div className="text-sm font-medium mb-1">{r.name}</div>
+                    <div className="text-xs mb-2">To: {r.contact || '—'}</div>
+                    <div className="text-sm font-semibold">Subject</div>
+                    <div className="text-sm mb-2">{rfqDrafts[r.id].subject}</div>
+                    <div className="text-sm font-semibold">Body</div>
+                    <pre className="whitespace-pre-wrap text-xs bg-muted/40 p-2 rounded">{rfqDrafts[r.id].body_md}</pre>
+                  </div>
+                ) : null)}
+              </CardContent>
+            </Card>
+          )}

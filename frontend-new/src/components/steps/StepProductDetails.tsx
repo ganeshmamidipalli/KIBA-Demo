@@ -376,6 +376,7 @@ export function StepProductDetails({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
+      className="mx-auto max-w-4xl space-y-4 px-4"
     >
       <Card className="border-border">
         <CardHeader>
@@ -628,5 +629,4 @@ export function StepProductDetails({
     </motion.div>
   );
 }
-
 

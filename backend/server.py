@@ -978,14 +978,51 @@ async def vendor_finder_endpoint(req: Request):
         logger.info(f"🔍 Finding vendors for: {product_name}")
         logger.info(f"   Budget: ${budget}, Specs: {selected_specs}")
         
-        # Run web search using the exact generated query if provided, otherwise build a simple default
-        search_query = generated_query.strip() if isinstance(generated_query, str) and generated_query.strip() else \
-            f"i want the best {product_name} {' '.join(selected_specs)} with links with {max_results} vendors"
+        # Build an enhanced, constraint-aware query for consistent high-quality results
+        def build_enhanced_query(base_q: str) -> str:
+            base = (base_q or "").strip()
+            core = base if base else f"best {product_name} {' '.join(selected_specs)} vendors"
+            # Enforce constraints inline to guide the search model
+            constraints = [
+                "US vendors only",
+                "provide direct purchase links",
+                "no broken links",
+                "authorized retailers or distributors",
+                "exclude marketplaces with unreliable listings",
+                "10 reputable vendors max"
+            ]
+            constraint_text = "; ".join(constraints)
+            return f"{core}. Constraints: {constraint_text}."
+
+        raw_query = generated_query if isinstance(generated_query, str) else ""
+        search_query = build_enhanced_query(raw_query)
+
+        # Execute search
         web_search_output = run_web_search(search_query)
         
         logger.info(f"✅ Web search completed for: {product_name}")
         
         # Format response (return query and raw output exactly)
+        # Optional: lightweight link validation (best effort)
+        try:
+            import re, requests
+            urls = re.findall(r"https?://[^\s)]+", web_search_output or "")
+            validated = []
+            seen = set()
+            for u in urls[:30]:  # cap to avoid long checks
+                if u in seen:
+                    continue
+                seen.add(u)
+                status = None
+                try:
+                    r = requests.head(u, timeout=5, allow_redirects=True)
+                    status = r.status_code
+                except Exception:
+                    status = None
+                validated.append({"url": u, "status": status})
+        except Exception:
+            validated = []
+
         response = {
             "query": search_query,
             "selected_name": product_name,
@@ -998,7 +1035,8 @@ async def vendor_finder_endpoint(req: Request):
                 "missing_fields_count": 0,
                 "notes": f"Web search results for {product_name}"
             },
-            "output_text": web_search_output
+            "output_text": web_search_output,
+            "validated_links": validated
         }
         
         return JSONResponse(response)
@@ -1638,6 +1676,41 @@ async def evaluate_g1_endpoint(req: Request):
         logger.error(f"Error evaluating G1: {e}", exc_info=True)
         return JSONResponse({"error": f"Error evaluating G1: {str(e)}"}, status_code=500)
 
+@app.post("/api/post-cart/g1-explain")
+async def explain_g1_endpoint(req: Request):
+    """Return a plain-language explanation and fixes for a given G1 result.
+    This is a lightweight, deterministic helper (no LLM required for MVP)."""
+    try:
+        body = await req.json()
+        g1 = body.get("g1Result", {})
+        passed = bool(g1.get("passed"))
+        reasons = g1.get("reasonCodes", []) or []
+        missing = g1.get("missingItems", []) or []
+        approvers = g1.get("requiredApprovers", []) or []
+
+        summary = "Ready for Approvals" if passed else "Recommend RFQs"
+        fixes = []
+        if not passed:
+            for r in reasons:
+                if r == "MISSING_PRICE":
+                    fixes.append("Provide unit price, currency, and quantity for each item per vendor.")
+                elif r == "INSUFFICIENT_EVIDENCE":
+                    fixes.append("Attach quote evidence or vendor contact details (email/URL).")
+                elif r == "INSUFFICIENT_SPECS":
+                    fixes.append("Add specs per line (UOM, lead time, delivery terms, validity).")
+                elif r == "SOLE_SOURCE_JUST_REQUIRED":
+                    fixes.append("Add Sole Source Justification or switch to RFQs.")
+                elif r == "CONTRACT_REQUIRED":
+                    fixes.append("Upload executed contract or adjust procurement type.")
+                else:
+                    fixes.append(f"Resolve: {r}.")
+
+        approver_explain = [f"{a}: required by policy/rules" for a in approvers]
+        return JSONResponse({"summary": summary, "fixes": fixes, "approverExplain": approver_explain})
+    except Exception as e:
+        logger.error(f"Error explaining G1: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error explaining G1: {str(e)}"}, status_code=500)
+
 @app.post("/api/post-cart/pr")
 async def create_pr_endpoint(req: Request):
     """Create a new PR (Path A - Direct Procurement Approvals)"""
@@ -1704,6 +1777,46 @@ async def generate_rfq_endpoint(req: Request):
     except Exception as e:
         logger.error(f"Error generating RFQ: {e}", exc_info=True)
         return JSONResponse({"error": f"Error generating RFQ: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/rfq/draft")
+async def draft_rfq_endpoint(req: Request):
+    """Draft an RFQ message (subject + markdown body) for a vendor."""
+    try:
+        body = await req.json()
+        vendor = body.get("vendor", {})
+        items = body.get("lineItems", [])
+        due = body.get("dueDate")
+        terms = body.get("terms", {})
+        v_name = vendor.get("name") or vendor.get("id") or "Vendor"
+        subject = f"Request for Quote – {v_name}"
+        lines = "\n".join([f"- {it.get('desc','Item')} x{it.get('qty',1)} ({it.get('uom','EA')})" for it in items])
+        body_md = (
+            f"Hello {v_name},\n\n"
+            f"Please provide a quote for the following items by {due}:\n\n"
+            f"{lines}\n\n"
+            f"Terms:\n- Delivery: {terms.get('delivery','FOB Destination')}\n- Payment: {terms.get('payment','Net 30')}\n\n"
+            f"Thank you,\nProcurement Team"
+        )
+        return JSONResponse({"subject": subject, "body_md": body_md})
+    except Exception as e:
+        logger.error(f"Error drafting RFQ: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error drafting RFQ: {str(e)}"}, status_code=500)
+
+@app.post("/api/post-cart/email/prepare")
+async def prepare_email_endpoint(req: Request):
+    """Prepare a simple email payload for various intents (rfq_send, reminder, approver_request)."""
+    try:
+        body = await req.json()
+        intent = body.get("intent", "generic")
+        recipient = body.get("recipient", "")
+        context = body.get("context", {})
+        subject = f"{intent.replace('_',' ').title()}"
+        body_text = f"Hello,\n\nThis is an automated message regarding: {intent}.\n\nDetails:\n{json.dumps(context, indent=2)}\n\nRegards,\nProcurement"
+        body_html = f"<p>Hello,</p><p>This is an automated message regarding: <b>{intent}</b>.</p><pre>{json.dumps(context, indent=2)}</pre><p>Regards,<br/>Procurement</p>"
+        return JSONResponse({"subject": subject, "body_text": body_text, "body_html": body_html})
+    except Exception as e:
+        logger.error(f"Error preparing email: {e}", exc_info=True)
+        return JSONResponse({"error": f"Error preparing email: {str(e)}"}, status_code=500)
 
 @app.post("/api/post-cart/rfq/{rfq_id}/send")
 async def send_rfq_endpoint(rfq_id: str):

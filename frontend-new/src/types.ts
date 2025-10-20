@@ -259,7 +259,7 @@ export type ProcurementType =
   | 'ROMS';
 
 export interface G1Result {
-  pass: boolean;
+  passed: boolean;
   reasonCodes: string[];
   missingItems: string[];
   recommendations: string[];
@@ -282,6 +282,5 @@ export interface ChecklistItem {
   message?: string;
   required: boolean;
 }
-
 
 

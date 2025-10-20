@@ -112,7 +112,7 @@ export function StepProjectSummary({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
-      className="space-y-6"
+      className="mx-auto max-w-4xl space-y-4 px-4"
     >
       {/* Header */}
       <div className="text-center space-y-4 pb-6">

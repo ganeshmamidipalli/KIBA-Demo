@@ -310,4 +310,49 @@ export class PostCartApiService {
 
     return response.json();
   }
+
+  /**
+   * Explain G1 results (LLM-assisted or templated on backend)
+   */
+  static async explainG1(g1Result: any): Promise<{ summary: string; fixes: string[]; approverExplain?: string[] }> {
+    const response = await fetch(`${API_BASE}/api/post-cart/g1-explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ g1Result })
+    });
+    if (!response.ok) {
+      throw new Error(`G1 explanation failed: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Draft RFQ message for a vendor
+   */
+  static async draftRFQ(payload: { vendor: { id: string; name: string; contact?: string }, lineItems: LineItem[], dueDate: string, terms: { delivery: string; payment: string } }): Promise<{ subject: string; body_md: string }> {
+    const response = await fetch(`${API_BASE}/api/post-cart/rfq/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error(`RFQ draft failed: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Prepare a generic email
+   */
+  static async prepareEmail(payload: { intent: string; recipient: string; context: any }): Promise<{ subject: string; body_text: string; body_html: string }> {
+    const response = await fetch(`${API_BASE}/api/post-cart/email/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error(`Email prepare failed: ${response.statusText}`);
+    }
+    return response.json();
+  }
 }

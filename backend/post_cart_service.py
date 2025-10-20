@@ -74,8 +74,8 @@ class ApproverDecision:
     role: str
     userId: str
     decision: str  # 'APPROVED' | 'REJECTED' | 'REQUEST_CHANGES'
-    comment: Optional[str] = None
     timestamp: str
+    comment: Optional[str] = None
 
 @dataclass
 class ApprovalRoute:
@@ -138,7 +138,7 @@ class G1Context:
 
 @dataclass
 class G1Result:
-    pass: bool
+    passed: bool
     reasonCodes: List[str]
     missingItems: List[str]
     recommendations: List[str]
@@ -214,7 +214,7 @@ class G1RuleEngine:
             recommendations.append('Consider generating RFQs to gather missing information')
 
         return G1Result(
-            pass=pass_result,
+            passed=pass_result,
             reasonCodes=reason_codes,
             missingItems=missing_items,
             recommendations=recommendations,
@@ -228,9 +228,9 @@ class G1RuleEngine:
         checklist = G1RuleEngine._generate_checklist(context, g1_result)
         readiness_percentage = G1RuleEngine._calculate_readiness_percentage(checklist)
         
-        recommendation = 'PROCEED_TO_APPROVALS' if g1_result.pass else 'GENERATE_RFQS'
+        recommendation = 'PROCEED_TO_APPROVALS' if g1_result.passed else 'GENERATE_RFQS'
         reason = (
-            'All requirements met for direct procurement approval' if g1_result.pass
+            'All requirements met for direct procurement approval' if g1_result.passed
             else f"Missing items: {', '.join(g1_result.missingItems)}"
         )
 

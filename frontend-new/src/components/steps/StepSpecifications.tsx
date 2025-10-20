@@ -545,7 +545,7 @@ export function StepSpecifications({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
-      className="space-y-6"
+      className="mx-auto max-w-4xl space-y-4 px-4"
     >
       {/* Step 3: AI Follow-up Questions */}
       {currentStep === 3 && intakeData && intakeData.missing_info_questions.length > 0 && (
