@@ -295,6 +295,8 @@ export default function App() {
                     setFollowupAnswers={setFollowupAnswers}
                     kpaRecommendations={kpaRecommendations}
                     setKpaRecommendations={setKpaRecommendations}
+                    // Step identification
+                    currentStep={currentStep}
                     onNext={handleNext}
                     onBack={handleBack}
                   />
@@ -354,6 +356,8 @@ export default function App() {
                     setFollowupAnswers={setFollowupAnswers}
                     kpaRecommendations={kpaRecommendations}
                     setKpaRecommendations={setKpaRecommendations}
+                    // Step identification
+                    currentStep={currentStep}
                     onNext={handleNext}
                     onBack={handleBack}
                   />

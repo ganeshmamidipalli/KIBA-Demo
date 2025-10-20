@@ -40,6 +40,8 @@ interface StepSpecificationsProps {
   setFollowupAnswers: (value: Record<string, string>) => void;
   kpaRecommendations: KPARecommendations | null;
   setKpaRecommendations: (value: KPARecommendations | null) => void;
+  // Step identification
+  currentStep: number;
   onNext: () => void;
   onBack: () => void;
 }
@@ -71,6 +73,8 @@ export function StepSpecifications({
   setFollowupAnswers,
   kpaRecommendations,
   setKpaRecommendations,
+  // Step identification
+  currentStep,
   onNext,
   onBack,
 }: StepSpecificationsProps) {
@@ -264,21 +268,52 @@ export function StepSpecifications({
     })();
   }, [intakeData, setIntakeData, setFollowupAnswers, setKpaRecommendations]);
 
-  // Auto-generate recommendations if we have KPA data but no variants
+  // Auto-generate recommendations if we have KPA data but no variants (only for Step 5)
   useEffect(() => {
-    if (kpaRecommendations && variants.length === 0 && !generatingRecommendations) {
-      const convertedVariants = convertKPARecommendations(kpaRecommendations);
-      setVariants(convertedVariants);
-      
-      // Auto-select recommended variant
-      const recommendedIndex = kpaRecommendations.recommended_index;
-      if (convertedVariants[recommendedIndex]) {
-        setSelectedVariants([convertedVariants[recommendedIndex]]);
+    if (currentStep === 5) {
+      if (kpaRecommendations && variants.length === 0 && !generatingRecommendations) {
+        const convertedVariants = convertKPARecommendations(kpaRecommendations);
+        setVariants(convertedVariants);
+        
+        // Auto-select recommended variant
+        const recommendedIndex = kpaRecommendations.recommended_index;
+        if (convertedVariants[recommendedIndex]) {
+          setSelectedVariants([convertedVariants[recommendedIndex]]);
+        }
+      } else if (variants.length === 0 && !generatingRecommendations && !intakeData) {
+        // Try to fetch recommendations from session if we have a session ID
+        if (kpaSessionId) {
+          fetchRecommendationsFromSession();
+        } else {
+          setTimeout(() => generateRecommendations(), 500);
+        }
       }
-    } else if (variants.length === 0 && !generatingRecommendations && !intakeData) {
+    }
+  }, [currentStep, kpaRecommendations, variants.length, generatingRecommendations, intakeData, kpaSessionId]);
+
+  // Fetch recommendations from session
+  const fetchRecommendationsFromSession = async () => {
+    if (!kpaSessionId) return;
+    
+    try {
+      const response = await api.getSessionData(kpaSessionId);
+      if (response.recommendations) {
+        setKpaRecommendations(response.recommendations);
+        const convertedVariants = convertKPARecommendations(response.recommendations);
+        setVariants(convertedVariants);
+        
+        // Auto-select recommended variant
+        const recommendedIndex = response.recommendations.recommended_index;
+        if (convertedVariants[recommendedIndex]) {
+          setSelectedVariants([convertedVariants[recommendedIndex]]);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching recommendations from session:", error);
+      // Fallback to generating recommendations
       setTimeout(() => generateRecommendations(), 500);
     }
-  }, [kpaRecommendations, variants.length, generatingRecommendations, intakeData]);
+  };
 
   const handleContinue = () => {
     if (selectedVariants.length === 0) {
@@ -394,8 +429,8 @@ export function StepSpecifications({
       transition={{ duration: 0.3 }}
       className="space-y-6"
     >
-      {/* KPA One-Flow Follow-up Questions */}
-      {intakeData && intakeData.missing_info_questions.length > 0 && (
+      {/* Step 3: AI Follow-up Questions */}
+      {currentStep === 3 && intakeData && intakeData.missing_info_questions.length > 0 && (
         <Card className="border-blue-500/30 bg-blue-500/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -442,8 +477,35 @@ export function StepSpecifications({
         </Card>
       )}
 
-      {/* Show recommendations if we have them */}
-      {(variants.length > 0 || kpaRecommendations) && (
+      {/* Step 3: No follow-up questions needed */}
+      {currentStep === 3 && (!intakeData || !intakeData.missing_info_questions || intakeData.missing_info_questions.length === 0) && (
+        <Card className="border-green-500/30 bg-green-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                  <CheckCircle2 className="h-6 w-6 text-green-600" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold mb-1">All Set!</h3>
+                <p className="text-sm text-muted-foreground">
+                  We have all the information we need. You can proceed to review your project summary.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end pt-4">
+              <Button onClick={onNext} className="gap-2">
+                Continue to Project Summary
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step 5: Show recommendations if we have them */}
+      {currentStep === 5 && (variants.length > 0 || kpaRecommendations) && (
         <>
           {/* Recommendations Ready Card */}
           {variants.length > 0 && (
@@ -742,6 +804,35 @@ export function StepSpecifications({
             </Button>
           </div>
         </>
+      )}
+
+      {/* Step 5: No recommendations yet - show loading or generate button */}
+      {currentStep === 5 && variants.length === 0 && !kpaRecommendations && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
+                  <Loader2 className="h-6 w-6 text-amber-600 animate-spin" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold mb-1">Generating Recommendations...</h3>
+                <p className="text-sm text-muted-foreground">
+                  Please wait while we analyze your requirements and generate personalized recommendations.
+                </p>
+              </div>
+            </div>
+            {!generatingRecommendations && (
+              <div className="flex justify-end pt-4">
+                <Button onClick={generateRecommendations} className="gap-2">
+                  <Sparkles className="h-4 w-4" />
+                  Generate Recommendations
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
     </motion.div>
   );

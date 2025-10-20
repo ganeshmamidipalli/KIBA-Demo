@@ -250,4 +250,20 @@ export async function generateFinalRecommendations(sessionId: string) {
   return response.json();
 }
 
+export async function getSessionData(sessionId: string) {
+  const response = await fetch(`${API_BASE}/api/session/${sessionId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to fetch session data: ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+}
+
 
