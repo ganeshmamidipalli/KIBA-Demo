@@ -81,6 +81,11 @@ MULTICATEGORY_SCHEMA: Dict[str, Any] = {
     }
 }
 
+_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+
+def _cache_key(product_name: str, specs: List[str], max_results: int) -> str:
+    return json.dumps({"p": product_name, "s": specs, "n": max_results}, sort_keys=True)
+
 def _build_input_text(product_name: str, specs: List[str], max_results: int) -> str:
     spec_text = ", ".join(specs) if specs else ""
     # Style requested by user: precise, official links, US-only, exact vendor count
@@ -90,9 +95,18 @@ def _build_input_text(product_name: str, specs: List[str], max_results: int) -> 
         f"Goal: \"i want the best {product_name} based on these specifications ({spec_text}) with links with ~{max_results} vendors.\""
     )
 
-def search_vendors_for_product(product_name: str, specs: List[str], budget: float, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Search for vendors using OpenAI web_search with strict JSON schema output."""
+def search_vendors_for_product(product_name: str, specs: List[str], budget: float, max_results: int = 10, refresh: bool = False) -> List[Dict[str, Any]]:
+    """Search for vendors using OpenAI web_search with strict JSON schema output.
+
+    Caching: results are cached per (product_name, specs, max_results). If refresh is False and
+    a cached result exists, the cached result is returned without calling web_search again.
+    """
     try:
+        # Cache short-circuit unless refresh requested
+        key = _cache_key(product_name, specs, max_results)
+        if not refresh and key in _CACHE:
+            return _CACHE[key]
+
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             print("❌ OPENAI_API_KEY not set")
@@ -149,7 +163,9 @@ def search_vendors_for_product(product_name: str, specs: List[str], budget: floa
                 })
 
         print(f"✅ Found {len(vendors_out)} vendors via strict web_search")
-        return vendors_out[:max_results]
+        vendors_out = vendors_out[:max_results]
+        _CACHE[key] = vendors_out
+        return vendors_out
 
     except Exception as e:
         print(f"❌ Web search error: {e}")

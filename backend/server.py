@@ -961,6 +961,7 @@ async def vendor_finder_endpoint(req: Request):
         page = body.get("page", 0)
         page_size = body.get("page_size", 10)
         max_results = body.get("max_results", 10)
+        refresh = body.get("refresh", False)
         
         if not selected_variant:
             return JSONResponse({"error": "selected_variant is required"}, status_code=400)
@@ -976,8 +977,8 @@ async def vendor_finder_endpoint(req: Request):
         logger.info(f"🔍 Finding vendors for: {product_name}")
         logger.info(f"   Budget: ${budget}, Specs: {selected_specs}")
         
-        # Use simple web search
-        vendors = search_vendors_for_product(product_name, selected_specs, budget, max_results)
+        # Use simple web search with cache; only calls web if no cache or refresh=True
+        vendors = search_vendors_for_product(product_name, selected_specs, budget, max_results, refresh)
         
         # Apply pagination
         start_idx = page * page_size
