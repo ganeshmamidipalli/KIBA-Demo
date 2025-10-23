@@ -163,13 +163,49 @@ export function StepSpecifications({
     if (generatingRecommendations) return;
     
     setGeneratingRecommendations(true);
+    setShowThinkingChain(true);
     
-    // Show thinking chain for recommendations
-    setThinkingSteps(prev => prev.map(step => 
-      step.id === 'research-options' ? { ...step, status: 'processing' } : step
-    ));
+    // Initialize thinking chain
+    initializeThinkingChain();
     
     try {
+      // Step 1: Analyzing Your Answers
+      await new Promise(resolve => setTimeout(resolve, 800));
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'analyze-answers' ? { ...step, status: 'processing' } : step
+      ));
+      
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'analyze-answers' ? { ...step, status: 'completed' } : step
+      ));
+      
+      // Step 2: Generating Project Summary
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'generate-summary' ? { ...step, status: 'processing' } : step
+      ));
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'generate-summary' ? { ...step, status: 'completed' } : step
+      ));
+      
+      // Step 3: Researching Product Options
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'research-options' ? { ...step, status: 'processing' } : step
+      ));
+      
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'research-options' ? { ...step, status: 'completed' } : step
+      ));
+      
+      // Step 4: Generate AI Recommendations
+      setThinkingSteps(prev => prev.map(step => 
+        step.id === 'generate-recommendations' ? { ...step, status: 'processing' } : step
+      ));
+      
+      // Make the actual API call
       const response = await api.generateRecommendations({
         product_name: productName,
         budget_usd: parseFloat(budget),
@@ -185,10 +221,9 @@ export function StepSpecifications({
         }
       });
       
-      // Mark research as completed and start generating
+      // Mark final step as completed
       setThinkingSteps(prev => prev.map(step => 
-        step.id === 'research-options' ? { ...step, status: 'completed' } : 
-        step.id === 'generate-recommendations' ? { ...step, status: 'processing' } : step
+        step.id === 'generate-recommendations' ? { ...step, status: 'completed' } : step
       ));
       
       if (response.variants && response.variants.length > 0) {
@@ -196,19 +231,15 @@ export function StepSpecifications({
         setAiRecommendation(response.ai_recommendation);
       }
       
-      // Mark generation as completed
-      setTimeout(() => {
-        setThinkingSteps(prev => prev.map(step => 
-          step.id === 'generate-recommendations' ? { ...step, status: 'completed' } : step
-        ));
-        setShowThinkingChain(false);
-      }, 1000);
+      // Hide thinking chain after a brief delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
     } catch (error) {
       console.error("Error generating recommendations:", error);
-      setShowThinkingChain(false);
+      addNotification('error', 'Failed to generate recommendations. Please try again.');
     } finally {
       setGeneratingRecommendations(false);
+      setShowThinkingChain(false);
     }
   };
 

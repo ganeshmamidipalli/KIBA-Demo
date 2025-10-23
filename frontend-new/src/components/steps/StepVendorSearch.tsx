@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Search, Loader2 } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  Search, 
+  Loader2
+} from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Input } from "../ui/input";
 import { findVendors } from "../../lib/api";
 import type { SpecVariant, KPARecommendations } from "../../types";
 
@@ -53,6 +59,50 @@ interface StepVendorSearchProps {
   onBack: () => void;
 }
 
+// Typing animation hook
+function useTyping(text: string, speed: number = 18) {
+  const [display, setDisplay] = useState("");
+  const [done, setDone] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  
+  useEffect(() => {
+    setDisplay("");
+    setDone(false);
+    let i = 0;
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = window.setInterval(() => {
+      if (i < text.length) setDisplay((prev) => prev + text[i++]);
+      else {
+        if (timerRef.current) window.clearInterval(timerRef.current);
+        setDone(true);
+      }
+    }, speed);
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
+  }, [text, speed]);
+  
+  return { display, done };
+}
+
+// Batch type for organizing search results (currently unused but kept for future use)
+// interface BatchType {
+//   id: number;
+//   title: string;
+//   items: Vendor[];
+//   expanded: boolean;
+// }
+
+// Thinking steps for the search process (minimal ChatGPT-style)
+const THINKING_STEPS = [
+  "Analyzing requirements…",
+  "Building search query…", 
+  "Searching vendors…",
+  "Validating vendor data…",
+  "Extracting pricing & availability…",
+  "Finalizing results…"
+];
+
 export function StepVendorSearch({
   productName,
   selectedVariants,
@@ -74,6 +124,95 @@ export function StepVendorSearch({
   const [queryInput, setQueryInput] = useState<string>("");
   const [notesInput, setNotesInput] = useState<string>("");
   const [autoRan, setAutoRan] = useState<boolean>(false);
+
+  // Enhanced search flow state
+  const [searchPhase, setSearchPhase] = useState<'idle' | 'typing' | 'thinking' | 'results'>('idle');
+  const [currentThinkingStep, setCurrentThinkingStep] = useState<number>(0);
+  const [refineQuery, setRefineQuery] = useState<string>("");
+  const [inStockOnly, setInStockOnly] = useState<boolean>(false);
+  const [minScore, setMinScore] = useState<number>(80);
+  
+  // Typing animation for search query
+  const { display: typedQuery } = useTyping(searchQuery, 14);
+  
+  // Abort controller for search requests
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Animated dots for thinking indicator
+  const [dots, setDots] = useState("");
+  useEffect(() => {
+    if (searchPhase === 'thinking') {
+      const interval = setInterval(() => {
+        setDots(prev => prev.length >= 3 ? "" : prev + ".");
+      }, 500);
+      return () => clearInterval(interval);
+    } else {
+      setDots("");
+    }
+  }, [searchPhase]);
+
+  // Minimal thinking steps animation (ChatGPT-style)
+  const revealThinkingSteps = async () => {
+    setCurrentThinkingStep(0);
+    for (let i = 0; i < THINKING_STEPS.length; i++) {
+      setCurrentThinkingStep(i);
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
+  };
+
+  // Enhanced search function with typing animation and thinking steps
+  const performEnhancedSearch = async (query: string) => {
+    // Start with typing animation
+    setSearchPhase('typing');
+    
+    // Wait for typing animation to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Then show thinking steps
+    setSearchPhase('thinking');
+    await revealThinkingSteps();
+    
+    // Cancel any existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    
+    try {
+      setSearching(true);
+      const results = await findVendors(query, controller.signal);
+      
+      if (!controller.signal.aborted) {
+        // Filter results based on current filters
+        const filteredResults = results.filter((vendor: Vendor) => {
+          if (inStockOnly && vendor.availability !== 'In Stock') return false;
+          // Add more filtering logic as needed
+          return true;
+        });
+        
+        // Create new batch
+        const newBatch: VendorBatch = {
+          id: Date.now(),
+          query,
+          results: filteredResults,
+          createdAt: new Date().toISOString(),
+        };
+        
+        setBatches(prev => [newBatch, ...prev]);
+        setActiveBatchId(newBatch.id);
+        setSearchPhase('results');
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('Search failed:', error);
+      }
+    } finally {
+      setSearching(false);
+      abortControllerRef.current = null;
+    }
+  };
 
   // Generate enhanced search query based on selected recommendation
   const generateEnhancedSearchQuery = () => {
@@ -297,8 +436,17 @@ export function StepVendorSearch({
       ? `${baseQuery}. Consider: ${notesInput.trim()}`
       : baseQuery;
 
+    // Start with typing animation
+    setSearchPhase('typing');
     setSearching(true);
     setSearchStatus("Finding vendors...");
+
+    // Wait for typing animation to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Then show thinking steps
+    setSearchPhase('thinking');
+    await revealThinkingSteps();
 
     // Create a new batch entry first and set active
     const newBatchId = (batches[batches.length - 1]?.id || 0) + 1;
@@ -324,6 +472,7 @@ export function StepVendorSearch({
               setSearchStatus("Vendor search complete!");
               const output = vendorData.output_text || `Found ${vendorData.results?.length || 0} vendors for ${selectedVariant.title}`;
               setSearchOutputText(output);
+              setSearchPhase('results');
               // Capture validated links if provided by backend
               try {
                 const links = (vendorData.validated_links || []) as Array<{url: string, status: number|null}>;
@@ -385,6 +534,69 @@ export function StepVendorSearch({
         </Card>
       ) : (
         <>
+          {/* Enhanced Search Flow */}
+          {(searchPhase === 'typing' || searchPhase === 'thinking' || (typedQuery && searchPhase !== 'idle')) && (
+            <Card className="border shadow-sm">
+              <CardContent className="py-4 space-y-3">
+                <div className="font-mono text-sm leading-6">
+                  <span className="opacity-70">Assistant query:</span>
+                  <div className="mt-1 rounded-xl bg-muted px-3 py-2 whitespace-pre-wrap">
+                    {typedQuery}
+                    <span className="inline-block w-2 h-4 translate-y-0.5 ml-1 bg-foreground animate-pulse" />
+                  </div>
+                </div>
+                <AnimatePresence>
+                  {searchPhase === 'thinking' && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }} 
+                      animate={{ opacity: 1, y: 0 }} 
+                      exit={{ opacity: 0, y: -10 }}
+                      className="flex items-center gap-3 text-sm text-muted-foreground bg-muted/30 rounded-lg px-4 py-3"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      <span>
+                        {THINKING_STEPS[currentThinkingStep] || THINKING_STEPS[THINKING_STEPS.length - 1]}
+                        <span className="inline-block w-2 ml-1">{dots}</span>
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Filters (only after results) */}
+          {searchPhase === 'results' && (
+            <Card className="border shadow-sm">
+              <CardContent className="py-3">
+                <div className="flex flex-col md:flex-row items-center gap-3 text-sm">
+                  <label className="inline-flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      className="accent-current" 
+                      checked={inStockOnly} 
+                      onChange={(e) => setInStockOnly(e.target.checked)} 
+                    />
+                    In-stock only
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span>Min score</span>
+                    <Input 
+                      type="number" 
+                      min={0} 
+                      max={100} 
+                      value={minScore} 
+                      onChange={(e) => setMinScore(Number(e.target.value) || 0)} 
+                      className="w-20" 
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Selected Variant Summary */}
           <Card>
             <CardHeader>
@@ -405,11 +617,23 @@ export function StepVendorSearch({
                   <h3 className="font-semibold text-lg text-primary">{selectedVariants[0].title}</h3>
                   <p className="text-sm text-muted-foreground mt-1">{selectedVariants[0].summary}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-primary">
-                    ${selectedVariants[0].est_unit_price_usd.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-muted-foreground">per unit • qty: {selectedVariants[0].quantity}</p>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-primary">
+                      ${selectedVariants[0].est_unit_price_usd.toLocaleString()}
+                    </p>
+                    <p className="text-xs text-muted-foreground">per unit • qty: {selectedVariants[0].quantity}</p>
+                  </div>
+                  <Button 
+                    onClick={() => {
+                      performEnhancedSearch(generateEnhancedSearchQuery());
+                    }}
+                    disabled={searching}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <Search className="h-4 w-4 mr-2" />
+                    Continue Vendor Search
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -510,13 +734,19 @@ export function StepVendorSearch({
                   onChange={e => setQueryInput(e.target.value)}
                 />
                 <div className="flex gap-2">
-                  <Button onClick={() => performVendorSearch(false)} disabled={searching || !queryInput.trim()} className="gap-2">
-                    <Search className="h-4 w-4" /> Run Search
+                  <Button 
+                    onClick={() => {
+                      performEnhancedSearch(queryInput || searchQuery);
+                    }} 
+                    disabled={searching || !queryInput.trim()} 
+                    className="gap-2"
+                  >
+                    <Search className="h-4 w-4" /> Run Enhanced Search
                   </Button>
                 </div>
               </CardContent>
             </Card>
-          ) : (
+          ) : searchPhase === 'results' && batches.length > 0 ? (
             <Card className="border-border bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
@@ -536,10 +766,10 @@ export function StepVendorSearch({
                     <Search className="h-4 w-4" /> Search Again with Thoughts
                   </Button>
                 </div>
-                <p className="text-xs text-gray-500">We’ll combine your thoughts with your last query and show a typing animation while searching.</p>
+                <p className="text-xs text-gray-500">We'll combine your thoughts with your last query and show a typing animation while searching.</p>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
           {/* Batches Sidebar + Active Batch Results */}
           {batches.length > 0 && (
@@ -569,7 +799,7 @@ export function StepVendorSearch({
                         onClick={() => setActiveBatchId(b.id)}
                         className={`w-full text-left px-3 py-2 rounded border transition-colors ${activeBatchId===b.id? 'bg-primary/10 border-primary':'bg-background border-border hover:bg-muted/50'}`}
                       >
-                        <div className="text-sm font-medium">Batch {b.id}</div>
+                        <div className="text-sm font-medium">Batch {batches.indexOf(b) + 1}</div>
                         <div className="text-xs text-gray-600 truncate">{b.query}</div>
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>{new Date(b.createdAt).toLocaleTimeString()}</span>
@@ -623,6 +853,37 @@ export function StepVendorSearch({
                   })}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Refine Search Section - Only show after first search results */}
+          {searchPhase === 'results' && batches.length > 0 && (
+            <Card className="border shadow-sm">
+              <CardContent className="py-4 space-y-3">
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (refineQuery.trim()) {
+                      setSearchPhase('typing');
+                      // Create a new batch with refined query
+                      const refinedQuery = `${queryInput || searchQuery}\n+ ${refineQuery.trim()}`;
+                      performEnhancedSearch(refinedQuery);
+                      setRefineQuery("");
+                    }
+                  }} 
+                  className="flex flex-col sm:flex-row items-stretch gap-3"
+                >
+                  <Input
+                    placeholder="Add your thoughts for the next search"
+                    value={refineQuery}
+                    onChange={(e) => setRefineQuery(e.target.value)}
+                  />
+                  <Button type="submit" disabled={!refineQuery.trim() || searching}>
+                    <Search className="h-4 w-4 mr-2" />
+                    Search Again with Thoughts
+                  </Button>
+                </form>
               </CardContent>
             </Card>
           )}

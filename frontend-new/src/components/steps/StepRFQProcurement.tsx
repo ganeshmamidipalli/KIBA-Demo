@@ -912,24 +912,3 @@ export function StepRFQProcurement({
     </motion.div>
   );
 }
-          {/* RFQ Draft Previews (after confirm) */}
-          {confirmedVendors && Object.keys(rfqDrafts).length > 0 && (
-            <Card className="border-orange-200">
-              <CardHeader>
-                <CardTitle className="text-base">RFQ Drafts</CardTitle>
-                <CardDescription>Review per-vendor email drafts before sending</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {vendorRows.map(r => rfqDrafts[r.id] ? (
-                  <div key={r.id} className="border rounded p-3">
-                    <div className="text-sm font-medium mb-1">{r.name}</div>
-                    <div className="text-xs mb-2">To: {r.contact || '—'}</div>
-                    <div className="text-sm font-semibold">Subject</div>
-                    <div className="text-sm mb-2">{rfqDrafts[r.id].subject}</div>
-                    <div className="text-sm font-semibold">Body</div>
-                    <pre className="whitespace-pre-wrap text-xs bg-muted/40 p-2 rounded">{rfqDrafts[r.id].body_md}</pre>
-                  </div>
-                ) : null)}
-              </CardContent>
-            </Card>
-          )}

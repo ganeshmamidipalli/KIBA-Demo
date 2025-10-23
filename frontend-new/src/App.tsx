@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Moon, Sun, CheckCircle2, Circle, AlertCircle, CheckCircle } from "lucide-react";
 import { useTheme } from "./components/theme-provider";
@@ -16,7 +16,8 @@ import { StepProjectSummary } from "./components/steps/StepProjectSummary";
 import { StepSpecifications } from "./components/steps/StepSpecifications";
 import { StepVendorSearch } from "./components/steps/StepVendorSearch";
 import { StepRFQ } from "./components/steps/StepRFQ";
-import { StepRFQProcurement } from "./components/steps/StepRFQProcurement";
+import { StepRFQProcurementSimple } from "./components/steps/StepRFQProcurementSimple";
+import { StepCARTEnhanced } from "./components/steps/StepCARTEnhanced";
 
 // Use step configurations from the centralized config
 const getStepTitle = (step: number): string => {
@@ -387,7 +388,7 @@ export default function App() {
                     setIntakeData={setIntakeData}
                     setKpaRecommendations={setKpaRecommendations}
                     // Callbacks
-                    onEdit={(step) => setCurrentStep(step)}
+                    onEdit={(step) => stepManager.navigateToStep(step)}
                     onConfirm={handleNext}
                     onBack={handleBack}
                   />
@@ -445,7 +446,7 @@ export default function App() {
                 )}
 
                 {stepManager.currentStep === 7 && (
-                  <StepRFQProcurement
+                  <StepCARTEnhanced
                     selectedVendors={selectedVendors}
                     onNext={handleNext}
                     onBack={handleBack}
